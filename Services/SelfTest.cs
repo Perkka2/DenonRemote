@@ -33,6 +33,7 @@ public static class SelfTest
         AspSetupPages();
         SetupUiMenu();
         ReceiverPacing();
+        ReceiverNaming();
 
         Console.WriteLine();
         Console.WriteLine($"  {_passed} passed, {Failures.Count} failed");
@@ -614,6 +615,40 @@ public static class SelfTest
             AjaxUiReader.Order(declared, []).OrderBy(x => x).SequenceEqual(declared));
         Check("a menu entry the section does not have is ignored",
             !AjaxUiReader.Order(declared, ["CONFIG_Z"]).Contains("CONFIG_Z"));
+    }
+
+    /// <summary>
+    /// What a receiver is called is the user's business, not the unit's. Discovery
+    /// only seeds the name with the model number, which is no help at all with two
+    /// of them in the house.
+    /// </summary>
+    private static void ReceiverNaming()
+    {
+        static ReceiverConfig Unit(string name = "") =>
+            new() { Host = "10.0.1.197", Model = "AVR-X4100W", Name = name };
+
+        var named = Unit();
+        named.SetName("Living room");
+        Check("a receiver takes the name it is given", named.Name == "Living room");
+
+        named.SetName("  Kitchen  ");
+        Check("a name is trimmed", named.Name == "Kitchen");
+
+        // Clearing it must return to the seed, not leave an unnamed row in the list.
+        named.SetName("");
+        Check("clearing a name falls back to the model", named.Name == "AVR-X4100W");
+
+        named.SetName("   ");
+        Check("so does blanking it with spaces", named.Name == "AVR-X4100W");
+
+        named.SetName(null);
+        Check("and so does no name at all", named.Name == "AVR-X4100W");
+
+        // A receiver added by address, before it has said what it is.
+        var unknown = new ReceiverConfig { Host = "10.0.1.50" };
+        unknown.SetName("");
+        Check("a receiver that has not said its model is named by address",
+            unknown.Name == "10.0.1.50");
     }
 
     /// <summary>

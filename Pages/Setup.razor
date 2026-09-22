@@ -34,6 +34,16 @@
             @if (expanded == current.Config.Id)
             {
                 <div class="settings">
+                    @* The name is yours, not the receiver's. Discovery fills it in with
+                       whatever the unit calls itself, which is its model number - fine as
+                       a starting point, no use at all with two of them in the house. *@
+                    <div class="setting">
+                        <span>Name</span>
+                        <input class="text" maxlength="40" value="@current.Config.Name"
+                               @onchange="args => SetName(current, args)" />
+                        <span class="muted-text">@current.Config.Host</span>
+                    </div>
+
                     <div class="setting">
                         <span>Max volume</span>
                         <input class="text narrow" type="number" min="20" max="98" step="1"
@@ -134,6 +144,15 @@
 
     private static string Db(double scale) =>
         (scale - 80).ToString("0", CultureInfo.InvariantCulture) + " dB";
+
+    /// <summary>
+    /// Renames a receiver. Blanking it falls back the same way adding one does -
+    /// the model, or the address - so the list can never show a nameless row.
+    /// </summary>
+    private void SetName(DenonClient client, ChangeEventArgs args)
+    {
+        Registry.Rename(client.Config.Id, args.Value?.ToString() ?? "");
+    }
 
     private void SetMax(DenonClient client, ChangeEventArgs args)
     {
