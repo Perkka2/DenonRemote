@@ -870,8 +870,41 @@ public static class SelfTest
         var speakers = rows.Where(r => r.Name == "Speaker").ToList();
         Check("crossover rows found", speakers.Count == 2);
         Check("crossover value", speakers[0].Value == "40");
-        Check("crossover is editable", speakers[0].Editable && speakers[0].Options.Count == 3);
+        Check("crossover offers the shared choices", speakers[0].Options.Count == 3);
         Check("crossover keeps its index", speakers[0].Index == "0" && speakers[1].Index == "2");
+
+        // display marks which controls are live: this document has the selection on
+        // All, so the individual speaker at index 0 is shown but greyed, while the
+        // one at index 2 can be changed. Reading 2 as changeable offered an edit the
+        // receiver had already refused.
+        Check("a greyed crossover is not editable", !speakers[0].Editable);
+        Check("and a live one is", speakers[1].Editable);
+        Check("the All row is greyed with it",
+            rows.Single(r => r.Name == "All").Locked);
+        Check("while the selection itself stays live",
+            !rows.Single(r => r.Name == "Selection").Locked);
+
+        // Distances and level trims are numbers the receiver states rather than lists
+        // it offers. They are settings all the same, and rendered as facts they
+        // looked like something the app had given up on.
+        var distances = AjaxConfigClient.Flatten(XDocument.Parse("""
+            <Distances mode="normal"><Unit>1</Unit><Step>1</Step>
+              <List><Speaker index="0" display="3">266</Speaker><Speaker index="1" display="2">271</Speaker></List>
+            </Distances>
+            """));
+        var live = distances.Single(r => r.Name == "Speaker" && r.Index == "0");
+        Check("a distance is a number", live.IsNumeric && live.Value == "266");
+        Check("with no list to choose from", !live.HasOptions);
+        Check("a greyed distance is not offered",
+            distances.Single(r => r.Name == "Speaker" && r.Index == "1").Locked);
+        Check("a negative trim is still a number",
+            AjaxConfigClient.Flatten(XDocument.Parse("""
+                <Levels><List><Speaker index="4" display="3">-30</Speaker></List></Levels>
+                """)).Single(r => r.Name == "Speaker").IsNumeric);
+        Check("a word is not a number",
+            !AjaxConfigClient.Flatten(XDocument.Parse("""
+                <X><Firmware display="3">1.2.3a</Firmware></X>
+                """)).Single(r => r.Name == "Firmware").IsNumeric);
 
         // A document with no published choices must stay read-only.
         var zone = XDocument.Parse("""

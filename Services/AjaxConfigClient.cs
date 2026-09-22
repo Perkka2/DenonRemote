@@ -127,7 +127,12 @@ public sealed class AjaxConfigClient(HttpProbe probe, ILogger<AjaxConfigClient> 
             var label = prefix.Length > 0 ? $"{prefix} · {name}" : name;
             if (child.Attribute("index")?.Value is { } own) label += $" {own}";
 
-            var locked = child.Attribute("gray")?.Value is "1" or "2";
+            // The receiver grades its own controls: 1 does not apply here (dropped
+            // above), 3 can be changed, 2 exists but not right now - the crossover
+            // for an individual speaker while the selection says All, say. Reading
+            // 2 as changeable offered edits the receiver had already refused.
+            var locked = child.Attribute("gray")?.Value is "1" or "2"
+                      || child.Attribute("display")?.Value == "2";
 
             var valueChild = child.Elements().FirstOrDefault(e => ValueNames.Contains(e.Name.LocalName));
             var lists = child.Elements().Where(e => e.Name.LocalName == "List").ToList();

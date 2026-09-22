@@ -13,16 +13,20 @@
         shown read-only.
     </p>
 
-    <div class="grid">
-        @foreach (var group in groups)
-        {
-            var current = group;
-            <button class="tile @(open == current ? "active" : "") @(absent.Contains(current) ? "absent" : "")"
-                    @onclick="() => ToggleAsync(current)">
-                @current.Label
-            </button>
-        }
-    </div>
+    @foreach (var section in groups.Select(g => g.Section).Distinct())
+    {
+        <h3 class="section-name">@SectionName(section)</h3>
+        <div class="grid">
+            @foreach (var group in groups.Where(g => g.Section == section))
+            {
+                var current = group;
+                <button class="tile @(open == current ? "active" : "") @(absent.Contains(current) ? "absent" : "")"
+                        @onclick="() => ToggleAsync(current)">
+                    @current.Label
+                </button>
+            }
+        </div>
+    }
 </section>
 
 @if (open is not null)
@@ -133,6 +137,18 @@
                             }
                         </select>
                     }
+                    else if (current.IsNumeric && !current.Locked)
+                    {
+                        @* Distances and level trims are numbers the receiver states
+                           rather than lists it offers; as read-only facts they looked
+                           like settings the app had given up on. *@
+                        <span class="valued">
+                            <input class="text narrow" value="@current.Value"
+                                   @key="(reads, current.Name, current.Index)"
+                                   @onchange="args => Typed(current, args)" />
+                            <button class="pill" @onclick="() => SetAsync(current)">Set</button>
+                        </span>
+                    }
                     else
                     {
                         <span class="fact-value">@Display(current)</span>
@@ -162,6 +178,26 @@
 
     /// <summary>Groups this unit turned out not to have, so they stop looking live.</summary>
     private readonly HashSet<ConfigGroup> absent = [];
+
+    /// <summary>The section names the receiver uses in its URLs, said properly.</summary>
+    private static string SectionName(string section) => section.ToLowerInvariant() switch
+    {
+        "speakers" => "Speakers",
+        "audio" => "Audio",
+        "inputs" => "Inputs",
+        "video" => "Video",
+        "general" => "General",
+        "network" => "Network",
+        "advanced" => "Advanced",
+        _ => char.ToUpperInvariant(section[0]) + section[1..],
+    };
+
+    private readonly Dictionary<string, string> typed = [];
+
+    private void Typed(ConfigRow row, ChangeEventArgs args) =>
+        typed[Key(row)] = args.Value?.ToString() ?? "";
+
+    private static string Key(ConfigRow row) => row.Name + "/" + (row.Index ?? "");
 
     private ConfigGroup? open;
     private IReadOnlyList<ConfigRow> rows = [];
@@ -385,12 +421,31 @@
         }
     }
 
+    /// <summary>Applies a typed number through the same write and read-back as a list.</summary>
+    private async Task SetAsync(ConfigRow row)
+    {
+        if (open is null || root is null) return;
+
+        var value = typed.TryGetValue(Key(row), out var entered) ? entered.Trim() : row.Value;
+        if (value.Length == 0) return;
+
+        await ApplyAsync(row, value);
+    }
+
     private async Task WriteAsync(ConfigRow row, ChangeEventArgs args)
     {
         if (open is null || root is null) return;
 
         var value = args.Value?.ToString();
         if (string.IsNullOrEmpty(value)) return;
+
+        await ApplyAsync(row, value);
+    }
+
+    /// <summary>One change, written and then read back - the receiver has the say.</summary>
+    private async Task ApplyAsync(ConfigRow row, string value)
+    {
+        if (open is null || root is null) return;
 
         var ok = await Client.WriteConfigAsync(open, root, row, value);
         var shown = Choices(row).FirstOrDefault(c => c.Code == value)?.Text ?? value;

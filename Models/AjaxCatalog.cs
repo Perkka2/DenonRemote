@@ -68,6 +68,16 @@ public sealed record ConfigRow(
     /// </summary>
     public bool NeedsArming => Arm is not null;
 
+    /// <summary>
+    /// A setting the receiver states as a number rather than offering a list: speaker
+    /// distances and level trims are the common ones. Editable, but as a typed value
+    /// rather than a dropdown - which is why they used to render as read-only facts.
+    /// </summary>
+    public bool IsNumeric =>
+        !HasOptions && Value.Length > 0 &&
+        double.TryParse(Value, System.Globalization.NumberStyles.Float,
+            System.Globalization.CultureInfo.InvariantCulture, out _);
+
     public bool HasOptions => Options.Count > 0;
 
     /// <summary>
