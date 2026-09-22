@@ -62,7 +62,7 @@ public sealed class DenonRegistry(
     {
         var client = Find(id);
         if (client is null) return;
-        client.Config.Name = name;
+        client.Config.SetName(name);
         Persist();
         Changed?.Invoke();
     }
@@ -76,8 +76,7 @@ public sealed class DenonRegistry(
 
     private DenonClient AddInternal(ReceiverConfig config, bool persist)
     {
-        if (string.IsNullOrWhiteSpace(config.Name))
-            config.Name = string.IsNullOrWhiteSpace(config.Model) ? config.Host : config.Model;
+        config.SetName(config.Name);
 
         DenonClient client;
         lock (_gate)
