@@ -18,8 +18,8 @@ jobs:
         include:
           # Each build runs on its own OS so ReadyToRun can pre-compile for it,
           # which is what keeps startup quick.
-          - { os: macos-14,      rid: osx-arm64 }
-          - { os: macos-13,      rid: osx-x64 }
+          - { os: macos-15,      rid: osx-arm64 }
+          - { os: macos-15,      rid: osx-x64 }
           - { os: windows-latest, rid: win-x64 }
           - { os: windows-latest, rid: win-arm64 }
           - { os: ubuntu-latest,  rid: linux-x64 }
