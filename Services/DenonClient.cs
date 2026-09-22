@@ -76,6 +76,9 @@ public sealed class DenonClient : IAsyncDisposable
     /// </summary>
     public NetAudioClient? NetAudio { get; private set; }
 
+    /// <summary>The pre-HEOS setup tree, where there is no config API to use instead.</summary>
+    public AspSetupClient? AspSetup { get; private set; }
+
     /// <summary>
     /// The graphic EQ, which lives outside the control protocol entirely - see
     /// <see cref="GraphicEqClient"/>. Not every model exposes one.
@@ -181,6 +184,17 @@ public sealed class DenonClient : IAsyncDisposable
                 Heos = new HeosClient(Config.Host, _loggerFactory.CreateLogger<HeosClient>());
                 Heos.StateChanged += () => Touch();
                 Heos.Start();
+            }
+
+            // Same rule as the player: only where the newer API is absent.
+            if (!Profile.SetupApi && AspSetup is null)
+            {
+                var asp = new AspSetupClient(_loggerFactory.CreateLogger<AspSetupClient>());
+                if (await asp.ProbeAsync(Config.Host, ct))
+                {
+                    AspSetup = asp;
+                    Profile.AspSetup = true;
+                }
             }
 
             // Only where HEOS isn't: on a HEOS unit the CLI is the better source, and

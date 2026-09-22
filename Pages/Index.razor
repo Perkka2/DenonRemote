@@ -84,7 +84,14 @@ else
     }
     else if (section == "setup")
     {
-        <SetupBrowser Client="client" />
+        @if (client.AspSetup is { } asp)
+        {
+            <AspSetupBrowser Setup="asp" Host="@client.Config.Host" />
+        }
+        else
+        {
+            <SetupBrowser Client="client" />
+        }
     }
     else if (section == "system")
     {
@@ -208,6 +215,8 @@ else
         // Either generation can say what it is playing; they just say it differently.
         if (candidate.Profile.Heos || candidate.Profile.NetAudio) sections.Add("playing");
         if (candidate.Profile.SetupApi) { sections.Add("info"); sections.Add("setup"); }
+        // The older generation has no Information document, but it does have settings.
+        else if (candidate.Profile.AspSetup) sections.Add("setup");
         return sections;
     }
 

@@ -21,6 +21,25 @@ if (options.Unknown.Count > 0)
 
 if (options.SelfTest) return SelfTest.Run();
 
+if (options.ReadPages is { } pageDir)
+{
+    foreach (var file in Directory.GetFiles(pageDir, "*.asp").OrderBy(f => f))
+    {
+        var page = AspSetupClient.Parse(await File.ReadAllTextAsync(file));
+        if (page is null) { Console.WriteLine($"-- {Path.GetFileName(file)}: no form"); continue; }
+
+        Console.WriteLine($"\n=== {page.Title}   [{Path.GetFileName(file)}]");
+        if (page.LockedBy is { } why) Console.WriteLine($"    locked: {why}");
+        foreach (var row in page.Rows)
+        {
+            var where = row.Index is null ? "" : $"[{row.Index}] ";
+            var choices = row.Options.Count == 0 ? "(text)" : string.Join(", ", row.Options.Select(o => o.Text));
+            Console.WriteLine($"    {where}{row.Label,-26} = {row.Value,-12} of {choices}");
+        }
+    }
+    return 0;
+}
+
 if (options.Probe is { } sweepTarget)
 {
     using var sweepLog = LoggerFactory.Create(b => b.AddSimpleConsole());

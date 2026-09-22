@@ -25,6 +25,9 @@ public sealed class StartupOptions
     /// <summary>Sweep a receiver's HTTP APIs and exit, writing a report.</summary>
     public string? Probe { get; private init; }
 
+    /// <summary>Parse captured setup pages and print what was read. Development aid.</summary>
+    public string? ReadPages { get; private init; }
+
     /// <summary>
     /// Anything on the command line that wasn't understood. A mistyped flag used to
     /// fall through the switch and silently start the web app instead - which looks
@@ -43,6 +46,7 @@ public sealed class StartupOptions
         var selfTest = false;
         string? fetchUi = null;
         string? probe = null;
+        string? readPages = null;
         var unknown = new List<string>();
 
         for (var i = 0; i < args.Length; i++)
@@ -73,6 +77,11 @@ public sealed class StartupOptions
                     i++;
                     break;
 
+                case "--read-pages" when i + 1 < args.Length:
+                    readPages = args[i + 1];
+                    i++;
+                    break;
+
                 case "--urls":
                     urlsOverridden = true;
                     break;
@@ -96,6 +105,7 @@ public sealed class StartupOptions
             SelfTest = selfTest,
             FetchUi = fetchUi,
             Probe = probe,
+            ReadPages = readPages,
             Unknown = unknown,
         };
     }
@@ -109,6 +119,7 @@ public sealed class StartupOptions
     --self-test        run the built-in checks and exit
     --fetch-ui <host>  capture that receiver's own setup UI and exit
     --probe <host>     sweep that receiver's HTTP APIs and exit
+    --read-pages <dir> parse captured setup pages in <dir> and print them
 
 """;
 
