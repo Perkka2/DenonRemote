@@ -21,6 +21,13 @@ if (options.Unknown.Count > 0)
 
 if (options.SelfTest) return SelfTest.Run();
 
+if (options.ShowPost is { } postFile)
+{
+    foreach (var field in AspSetupClient.Fields(await File.ReadAllTextAsync(postFile)))
+        Console.WriteLine($"{field.Key}={field.Value}");
+    return 0;
+}
+
 if (options.ReadPages is { } pageDir)
 {
     foreach (var file in Directory.GetFiles(pageDir, "*.asp").OrderBy(f => f))

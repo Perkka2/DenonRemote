@@ -10,8 +10,9 @@
 <section class="panel tight">
     <h2>Receiver setup</h2>
     <p class="muted-text">
-        Read from the receiver's own setup pages, in its own words. Read-only for
-        now — change these from the receiver's menus or its own web page.
+        Read from the receiver's own setup pages, in its own words. A change is sent
+        as the whole form, exactly as the receiver's own page sends it, then read
+        back — so a setting it declines says so rather than appearing to have worked.
     </p>
 
     @if (groups.Count == 0)
@@ -61,6 +62,11 @@
                 <p class="muted-text">Nothing here can change while @why.</p>
             }
 
+            @if (!string.IsNullOrEmpty(message))
+            {
+                <p class="muted-text">@message</p>
+            }
+
             @if (screen.Rows.Count == 0)
             {
                 <p class="muted-text">Nothing on this page to show.</p>
@@ -81,8 +87,22 @@
                             <span class="matrix-name">@index</span>
                             @foreach (var column in Columns)
                             {
+                                    var cell = Cell(index, column);
                                 <span class="matrix-cell">
-                                    <span class="fact-value">@Display(Cell(index, column))</span>
+                                    @if (cell is not null && cell.Editable)
+                                    {
+                                        <select class="text" value="@cell.Value" @key="(reads, index, column)"
+                                                @onchange="args => WriteAsync(cell, args)">
+                                            @foreach (var choice in cell.Options)
+                                            {
+                                                <option value="@choice.Code" selected="@(choice.Code == cell.Value)">@choice.Text</option>
+                                            }
+                                        </select>
+                                    }
+                                    else
+                                    {
+                                        <span class="fact-value">@Display(cell)</span>
+                                    }
                                 </span>
                             }
                         </div>
@@ -93,9 +113,27 @@
             {
                 @foreach (var row in screen.Rows)
                 {
+                    var current = row;
                     <div class="setting wide">
-                        <span>@row.Label</span>
-                        <span class="fact-value">@Display(row)</span>
+                        <span>@current.Label</span>
+                        @if (current.Editable)
+                        {
+                            <select class="text" value="@current.Value" @key="(reads, current.Name)"
+                                    @onchange="args => WriteAsync(current, args)">
+                                @foreach (var choice in current.Options)
+                                {
+                                    <option value="@choice.Code" selected="@(choice.Code == current.Value)">@choice.Text</option>
+                                }
+                            </select>
+                        }
+                        else
+                        {
+                            <span class="fact-value">@Display(current)</span>
+                            @if (current.Locked && current.HasOptions)
+                            {
+                                <span class="hint">locked</span>
+                            }
+                        }
                     </div>
                 }
             }
@@ -112,6 +150,9 @@
     private AspPage? screen;
     private bool loading;
     private bool reading = true;
+    private string? content;
+    private string message = "";
+    private int reads;
 
     /// <summary>
     /// The menus come from the receiver, so they are read once when the tab opens
@@ -160,19 +201,47 @@
         return row.Options.FirstOrDefault(o => o.Code == row.Value)?.Text ?? row.Value;
     }
 
+    /// <summary>
+    /// Sends one change and reads the page back. The receiver is the authority on
+    /// whether it took: a setting it quietly declines comes back unchanged, and
+    /// saying so beats pretending.
+    /// </summary>
+    private async Task WriteAsync(ConfigRow row, ChangeEventArgs args)
+    {
+        if (content is null) return;
+
+        var value = args.Value?.ToString();
+        if (string.IsNullOrEmpty(value)) return;
+
+        var wanted = row.Options.FirstOrDefault(o => o.Code == value)?.Text ?? value;
+        var what = row.Index is null ? row.Label : $"{row.Name} for {row.Index}";
+
+        screen = await Setup.WriteAsync(Host, content, row.PostName, value, CancellationToken.None);
+        // A refused setting comes back as it was, and Blazor will not redraw a select
+        // whose bound value it thinks unchanged - so make them new elements.
+        reads++;
+
+        var after = screen?.Rows.FirstOrDefault(r => r.Name == row.Name && r.Index == row.Index);
+        message = screen is null ? $"{what} — the receiver didn't answer."
+            : after?.Value == value ? $"{what} set to {wanted}."
+            : $"{what} didn't change — the receiver still reports {Display(after)}.";
+    }
+
     private async Task ToggleAsync(AspGroup group)
     {
-        if (open == group) { open = null; screen = null; return; }
+        if (open == group) { open = null; screen = null; message = ""; return; }
 
         open = group;
         screen = null;
+        message = "";
         loading = true;
         try
         {
             // The menu links to a frameset; the controls are in a frame inside it.
-            var content = await Setup.ContentFrameAsync(Host, group.Path, CancellationToken.None);
+            content = await Setup.ContentFrameAsync(Host, group.Path, CancellationToken.None);
             if (content is not null)
                 screen = await Setup.ReadAsync(Host, content, CancellationToken.None);
+            reads++;
         }
         catch (Exception ex)
         {

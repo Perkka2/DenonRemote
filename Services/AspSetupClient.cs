@@ -204,6 +204,149 @@ public sealed partial class AspSetupClient(ILogger<AspSetupClient> log)
         return "/" + string.Join('/', parts);
     }
 
+    // ---------------------------------------------------------------- writing
+
+    /// <summary>
+    /// The fields a browser would submit for this form, in document order.
+    ///
+    /// There is no need to discover whether the receiver accepts one field on its
+    /// own: the page arrives with every field and its current value already in it,
+    /// so the whole form can be reproduced exactly as the browser sends it. What
+    /// matters instead is completeness - a field left out of a post is a field the
+    /// receiver may read as cleared - so this follows the HTML rules for which
+    /// controls are successful rather than only the ones the panel happens to draw.
+    ///
+    /// Buttons are excluded: these forms submit from JavaScript (form.submit()),
+    /// which carries no button value, and type=button never submits regardless.
+    /// </summary>
+    public static List<KeyValuePair<string, string>> Fields(string html)
+    {
+        var body = FormBody(html);
+        var fields = new List<KeyValuePair<string, string>>();
+        var seenRadio = new HashSet<string>(StringComparer.Ordinal);
+
+        foreach (Match control in AnyControl().Matches(body))
+        {
+            // A disabled control is not submitted. The proxy port box on Network
+            // Settings is disabled while the proxy is off, and sending it was the
+            // one place this differed from what the browser does.
+            if (Has(control.Value, "disabled")) continue;
+
+            if (control.Groups["select"].Success)
+            {
+                var name = Attribute(control.Value, "name");
+                if (name.Length == 0) continue;
+
+                // An unselected select still submits - its first option.
+                var options = Option().Matches(control.Groups["options"].Value);
+                var chosen = options.FirstOrDefault(o => o.Groups["selected"].Success)
+                             ?? options.FirstOrDefault();
+                if (chosen is not null)
+                    fields.Add(new(name, WebUtility.HtmlDecode(chosen.Groups["value"].Value)));
+                continue;
+            }
+
+            var tag = control.Value;
+            var type = Attribute(tag, "type");
+            var field = Attribute(tag, "name");
+            if (field.Length == 0) continue;
+
+            switch (type.ToLowerInvariant())
+            {
+                // Only the checked one in a group is submitted.
+                case "radio":
+                    if (!Has(tag, "checked")) continue;
+                    if (!seenRadio.Add(field)) continue;
+                    fields.Add(new(field, WebUtility.HtmlDecode(Attribute(tag, "value"))));
+                    break;
+
+                // An unchecked box is not submitted at all.
+                case "checkbox":
+                    if (!Has(tag, "checked")) continue;
+                    var box = Attribute(tag, "value");
+                    fields.Add(new(field, WebUtility.HtmlDecode(box.Length > 0 ? box : "on")));
+                    break;
+
+                case "button" or "submit" or "reset" or "image" or "file":
+                    continue;
+
+                // text, hidden, password and anything unrecognised submit their value.
+                default:
+                    fields.Add(new(field, WebUtility.HtmlDecode(Attribute(tag, "value"))));
+                    break;
+            }
+        }
+
+        return fields;
+    }
+
+    /// <summary>The whole form as the browser would send it, with one field changed.</summary>
+    internal static List<KeyValuePair<string, string>>? BuildPost(string html, string name, string value)
+    {
+        var fields = Fields(html);
+
+        var at = fields.FindIndex(f => f.Key == name);
+        // Refusing rather than appending: a name the page does not have means the
+        // panel and the page have drifted, and inventing a field is how you set
+        // something the receiver never offered.
+        if (at < 0) return null;
+
+        fields[at] = new(name, value);
+        return fields;
+    }
+
+    /// <summary>
+    /// Applies one change by posting the whole form, then reads the page back.
+    /// Returns the page as it stands afterwards - which is the only honest answer
+    /// to whether the change took.
+    /// </summary>
+    public async Task<AspPage?> WriteAsync(
+        string host, string contentPath, string name, string value, CancellationToken ct)
+    {
+        var html = await GetAsync(host, contentPath, ct);
+        if (html is null) return null;
+
+        var fields = BuildPost(html, name, value);
+        if (fields is null)
+        {
+            log.LogWarning("{Field} is not on {Path}; not posting", name, contentPath);
+            return null;
+        }
+
+        // The form's action is relative to the page it is on; with none, it posts back.
+        var action = ActionAttribute().Match(FormTag().Match(html).Value).Groups["action"].Value;
+        var target = action.Length > 0 ? Resolve(contentPath, action) : contentPath;
+
+        try
+        {
+            using var content = new FormUrlEncodedContent(fields);
+            using var response = await Http.PostAsync(PageUrl(host, target), content, ct);
+            if (!response.IsSuccessStatusCode)
+                log.LogWarning("Write to {Target} on {Host} returned {Status}",
+                    target, host, (int)response.StatusCode);
+        }
+        catch (Exception ex)
+        {
+            log.LogWarning("Write to {Target} on {Host} failed: {Message}", target, host, ex.Message);
+            return null;
+        }
+
+        return await ReadAsync(host, contentPath, ct);
+    }
+
+    private static string FormBody(string html)
+    {
+        var form = FormExtent().Match(html);
+        return form.Success ? form.Groups["body"].Value : html;
+    }
+
+    private static string Attribute(string tag, string name) =>
+        Regex.Match(tag, $@"\b{name}\s*=\s*['""](?<v>[^'""]*)['""]", RegexOptions.IgnoreCase)
+            .Groups["v"].Value;
+
+    private static bool Has(string tag, string name) =>
+        Regex.IsMatch(tag, $@"\b{name}\b(?!\s*=)", RegexOptions.IgnoreCase);
+
     // ---------------------------------------------------------------- parsing
 
     /// <summary>
@@ -277,7 +420,10 @@ public sealed partial class AspSetupClient(ILogger<AspSetupClient> log)
                 var name = i < columns.Length ? columns[i] : Pretty(controls[i].Name);
                 page.Rows.Add(new ConfigRow(
                     name, name, controls[i].Value, controls[i].Options,
-                    label.Length > 0 ? label : (i + 1).ToString(), page.Locked));
+                    label.Length > 0 ? label : (i + 1).ToString(), page.Locked,
+                    // The column heading is shared down the table; this is the one
+                    // control, and the only name a write can use.
+                    Field: controls[i].Name));
             }
         }
 
@@ -433,6 +579,14 @@ public sealed partial class AspSetupClient(ILogger<AspSetupClient> log)
 
     [GeneratedRegex(@"(<table\b[^>]*>)(\s*)(?=<td\b)", RegexOptions.IgnoreCase)]
     private static partial Regex TableThenCell();
+
+    [GeneratedRegex(@"<form\b[^>]*>(?<body>.*?)</form>", RegexOptions.IgnoreCase | RegexOptions.Singleline)]
+    private static partial Regex FormExtent();
+
+    /// <summary>Every input and select, in the order the page writes them.</summary>
+    [GeneratedRegex(@"(?<select><select\b[^>]*>(?<options>.*?)</select>)|<input\b[^>]*>",
+        RegexOptions.IgnoreCase | RegexOptions.Singleline)]
+    private static partial Regex AnyControl();
 
     [GeneratedRegex(@"location\.href\s*=\s*['""](?<to>[^'""]+)['""]", RegexOptions.IgnoreCase)]
     private static partial Regex Redirect();

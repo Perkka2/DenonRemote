@@ -48,8 +48,17 @@ public sealed record ConfigRow(
     string Value,
     IReadOnlyList<ConfigChoice> Options,
     string? Index,
-    bool Locked)
+    bool Locked,
+    string? Field = null)
 {
+    /// <summary>
+    /// What a write names this setting. Usually the same as <see cref="Name"/>, but
+    /// in a table Name is the column heading - "HDMI" - shared by every row, while
+    /// the control posting the value is listHdmiAssignSAT/CBL. Writing by the
+    /// heading would aim at a field the page does not have.
+    /// </summary>
+    public string PostName => Field ?? Name;
+
     public bool HasOptions => Options.Count > 0;
 
     /// <summary>
