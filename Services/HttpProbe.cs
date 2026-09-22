@@ -1,4 +1,5 @@
 using System.Text;
+using DenonRemote.Models;
 
 namespace DenonRemote.Services;
 
@@ -7,16 +8,23 @@ public sealed record ProbeResult(string Method, string Url, int Status, string? 
     public bool Interesting => Error is null && Status is >= 200 and < 300 && Body.Trim().Length > 0;
 
     /// <summary>
-    /// The receiver buckling rather than answering: it refused the connection, or
-    /// took too long, or handed back a 500 it does not mean. Worth another go after
-    /// a pause; a 403 or a 404 is an answer and is not.
+    /// The receiver buckling rather than answering: it refused the connection, took
+    /// too long, or said outright that it is unavailable. Worth another go after a
+    /// pause; a 403 or a 404 is an answer and is not.
+    ///
+    /// A 500 is not in here, though it was briefly. On the X2500H a missing config
+    /// type answers 500 with an empty body, consistently, and the very next type
+    /// answers 200 - advanced 3 through 8 are 500 and advanced 9 is fine. So a 500
+    /// is this receiver's way of saying "no such setting". Retrying those four times
+    /// apiece bought nothing and added a few hundred requests to a sweep whose whole
+    /// problem was its weight.
     /// </summary>
     public bool Dropped =>
         (Error is not null &&
             (Error.Contains("refused", StringComparison.OrdinalIgnoreCase) ||
              Error.Contains("Timeout", StringComparison.OrdinalIgnoreCase) ||
              Error.Contains("SSL", StringComparison.OrdinalIgnoreCase)))
-        || Status is 500 or 503;
+        || Status is 503;
 }
 
 /// <summary>
@@ -27,7 +35,7 @@ public sealed record ProbeResult(string Method, string Url, int Status, string? 
 /// generation the Audyssey block is known to live at /ajax/audio/get_config?type=9,
 /// which makes the graphic EQ a likely sibling under the same family.
 /// </summary>
-public sealed class HttpProbe(ILogger<HttpProbe> log)
+public sealed class HttpProbe(ILogger<HttpProbe> log, AjaxUiReader ui)
 {
     /// <summary>
     /// The setup UI on newer units is HTTPS on 10443 with a self-signed certificate,
@@ -49,14 +57,16 @@ public sealed class HttpProbe(ILogger<HttpProbe> log)
     private const int MaxAsset = 2_000_000;
 
     public async Task<ProbeResult> SendAsync(
-        string method, string url, string? body, CancellationToken ct, int maxBody = MaxBody)
+        string method, string url, string? body, CancellationToken ct, int maxBody = MaxBody,
+        ReceiverPace pace = ReceiverPace.Interactive)
     {
         // One at a time, with a pause, and another go if the receiver drops it.
         // See ReceiverGate: hammering these units makes them stop answering, and
         // every setting after that point looks like one they do not have.
-        var host = Uri.TryCreate(url, UriKind.Absolute, out var parsed) ? parsed.Host : url;
-        return await ReceiverGate.RunAsync(host, () => SendOnceAsync(method, url, body, ct, maxBody),
-            r => r.Dropped, ct);
+        // Authority, not host: port 80 having no server says nothing about 10443.
+        var endpoint = Uri.TryCreate(url, UriKind.Absolute, out var parsed) ? parsed.Authority : url;
+        return await ReceiverGate.RunAsync(endpoint, () => SendOnceAsync(method, url, body, ct, maxBody),
+            r => r.Dropped, ct, pace);
     }
 
     private static async Task<ProbeResult> SendOnceAsync(
@@ -87,6 +97,15 @@ public sealed class HttpProbe(ILogger<HttpProbe> log)
     /// <summary>Posts a form body, which is what the pre-HEOS setup pages expect.</summary>
     public async Task<ProbeResult> SendFormAsync(string method, string url, string body, CancellationToken ct)
     {
+        // Through the gate like everything else. This one was going out unpaced, and
+        // a setup write is immediately followed by a read-back - the two together are
+        // exactly the back-to-back pair the receiver dislikes.
+        var endpoint = Uri.TryCreate(url, UriKind.Absolute, out var parsed) ? parsed.Authority : url;
+        return await ReceiverGate.RunAsync(endpoint, () => SendFormOnceAsync(url, body, ct), r => r.Dropped, ct);
+    }
+
+    private static async Task<ProbeResult> SendFormOnceAsync(string url, string body, CancellationToken ct)
+    {
         try
         {
             using var request = new HttpRequestMessage(HttpMethod.Post, url)
@@ -98,12 +117,12 @@ public sealed class HttpProbe(ILogger<HttpProbe> log)
             var text = await response.Content.ReadAsStringAsync(ct);
             if (text.Length > MaxBody) text = text[..MaxBody] + "\n… truncated …";
 
-            return new ProbeResult(method, url, (int)response.StatusCode,
+            return new ProbeResult("POST", url, (int)response.StatusCode,
                 response.Content.Headers.ContentType?.ToString(), text, null);
         }
         catch (Exception ex)
         {
-            return new ProbeResult(method, url, 0, null, "", ex.Message);
+            return new ProbeResult("POST", url, 0, null, "", ex.Message);
         }
     }
 
@@ -134,34 +153,63 @@ public sealed class HttpProbe(ILogger<HttpProbe> log)
             yield return ("POST", $"http://{host}/goform/{endpoint}", AppCommand(command));
         }
 
-        // The setup UI's own config API: plain HTTP on some firmware, HTTPS 10443 on the rest.
-        for (var type = 1; type <= 12; type++)
-        {
+        // Which transport the config API is on: plain HTTP on some firmware, HTTPS
+        // 10443 on the rest. Three types is enough to tell - the rest of the API is
+        // covered by what the receiver declares, so walking 1..12 over both
+        // transports was twenty-four questions to answer one.
+        for (var type = 1; type <= 3; type++)
             yield return ("GET", $"http://{host}/ajax/audio/get_config?type={type}", null);
-            yield return ("GET", $"https://{host}:10443/ajax/audio/get_config?type={type}", null);
-        }
     }
 
     /// <summary>
-    /// Every config category the setup UI reads, across both transports.
+    /// How far up to count in each section when the receiver will not say.
+    ///
+    /// Guesses, and they were guessed short once already: video stopped at 4, so TV
+    /// Format at 9 was never captured and looked for all the world like a setting the
+    /// receiver did not have.
     /// </summary>
-    public static IEnumerable<(string Method, string Url, string? Body)> DeepTargets(string host)
-    {
-        // Ranges from what the receiver's own setup UI declares, with room over the
-        // top. They were guessed before, and guessed short: video stopped at 4, so
-        // TV Format at 9 was never captured and looked for all the world like a
-        // setting the receiver did not have.
-        (string Category, int Max)[] categories =
-        [
-            ("general", 24), ("audio", 16), ("inputs", 8), ("speakers", 20),
-            ("video", 16), ("network", 14), ("advanced", 12), ("control", 8),
-            ("home", 2),
-        ];
+    private static readonly (string Section, int Max)[] Fallback =
+    [
+        ("audio", 16), ("video", 16), ("inputs", 8), ("speakers", 20),
+        ("network", 14), ("general", 24), ("control", 8), ("advanced", 12),
+        ("home", 2),
+    ];
 
-        foreach (var (category, max) in categories)
-        for (var type = 1; type <= max; type++)
+    /// <summary>
+    /// The config screens to ask this particular receiver for.
+    ///
+    /// Its own setup UI declares most of them - CONFIG_TVFORMAT:"9" and the rest - so
+    /// the ceiling comes from the receiver instead of from a guess here, which is the
+    /// point: a guess that is short makes a setting the unit has look like one it does
+    /// not.
+    ///
+    /// Not only the declared numbers, though. Every section on the X2500H declares
+    /// 2..n and omits 1, and 1 answers perfectly well on all of them - so the range is
+    /// 1 up to the highest it names. And two sections, Zone and Home, declare nothing
+    /// at all while answering six and one screens respectively; those fall back to
+    /// counting.
+    /// </summary>
+    public static IEnumerable<(string Method, string Url, string? Body)> ConfigTargets(
+        string host, IReadOnlyList<ConfigGroup> declared)
+    {
+        var highest = declared
+            .GroupBy(g => g.Section, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(g => g.Key, g => g.Max(x => x.Type), StringComparer.OrdinalIgnoreCase);
+
+        foreach (var (section, guess) in Fallback)
         {
-            yield return ("GET", $"https://{host}:10443/ajax/{category}/get_config?type={type}", null);
+            var max = highest.TryGetValue(section, out var said) ? said : guess;
+            for (var type = 1; type <= max; type++)
+                yield return ("GET", $"https://{host}:10443/ajax/{section}/get_config?type={type}", null);
+        }
+
+        // A section the receiver named that this list does not know about.
+        foreach (var (section, max) in highest)
+        {
+            if (Fallback.Any(f => string.Equals(f.Section, section, StringComparison.OrdinalIgnoreCase)))
+                continue;
+            for (var type = 1; type <= max; type++)
+                yield return ("GET", $"https://{host}:10443/ajax/{section}/get_config?type={type}", null);
         }
     }
 
@@ -212,7 +260,7 @@ public sealed class HttpProbe(ILogger<HttpProbe> log)
             {
                 if (ct.IsCancellationRequested) break;
 
-                var probe = await SendAsync("GET", candidate + "/", null, ct, MaxAsset);
+                var probe = await SendAsync("GET", candidate + "/", null, ct, MaxAsset, ReceiverPace.Bulk);
                 var outcome = probe.Error is null ? probe.Status.ToString() : probe.Error;
                 report.AppendLine($"GET {candidate}/ -> {outcome}"
                     + (attempt > 1 ? $"  (attempt {attempt})" : ""));
@@ -254,7 +302,7 @@ public sealed class HttpProbe(ILogger<HttpProbe> log)
             if (ct.IsCancellationRequested) break;
 
             var (pageUrl, depth) = queue.Dequeue();
-            var response = await SendAsync("GET", pageUrl.AbsoluteUri, null, ct, MaxAsset);
+            var response = await SendAsync("GET", pageUrl.AbsoluteUri, null, ct, MaxAsset, ReceiverPace.Bulk);
             report.AppendLine();
             report.AppendLine($"GET {pageUrl.AbsoluteUri} -> {(response.Error is null ? response.Status.ToString() : response.Error)}");
             if (!response.Interesting) continue;
@@ -282,7 +330,7 @@ public sealed class HttpProbe(ILogger<HttpProbe> log)
                     continue;
                 }
 
-                var asset = await SendAsync("GET", linked.AbsoluteUri, null, ct, MaxAsset);
+                var asset = await SendAsync("GET", linked.AbsoluteUri, null, ct, MaxAsset, ReceiverPace.Bulk);
                 report.AppendLine($"  {linked.AbsolutePath} -> {(asset.Error is null ? asset.Status.ToString() : asset.Error)}");
                 if (asset.Interesting) await SaveAsync(root, linked.AbsoluteUri, asset.Body, saved, ct);
             }
@@ -426,12 +474,26 @@ public sealed class HttpProbe(ILogger<HttpProbe> log)
         report.AppendLine(new string('=', 72));
 
         var hits = 0;
+        var sent = 0;
+        var started = DateTimeOffset.UtcNow;
 
-        foreach (var (method, url, body) in SweepTargets(host).Concat(DeepTargets(host)))
+        // Ask the receiver what it has before asking it for anything. Counting types
+        // upwards meant most of the sweep was questions it could only answer 500 to,
+        // and the weight of that is what made it stop answering at all.
+        var declared = await ui.ReadAsync(host, ct);
+        var config = ConfigTargets(host, declared).ToList();
+
+        report.AppendLine(declared.Count > 0
+            ? $"Setup UI declares {declared.Count} config screen(s); asking for {config.Count}."
+            : $"Setup UI did not answer; counting config types upwards ({config.Count} requests).");
+
+        foreach (var (method, url, body) in SweepTargets(host).Concat(config))
         {
             if (ct.IsCancellationRequested) break;
 
-            var result = await SendAsync(method, url, body, ct);
+            sent++;
+
+            var result = await SendAsync(method, url, body, ct, MaxBody, ReceiverPace.Bulk);
 
             report.AppendLine();
             report.AppendLine($"{method} {url}");
@@ -460,6 +522,10 @@ public sealed class HttpProbe(ILogger<HttpProbe> log)
 
         report.AppendLine();
         report.AppendLine($"{hits} endpoint(s) answered with content.");
+        // Worth seeing in the report: this is a lot of traffic for one receiver, and
+        // the pacing that keeps it upright is what makes it take as long as it does.
+        report.AppendLine(
+            $"{sent} request(s) in {(DateTimeOffset.UtcNow - started).TotalSeconds:F0}s, paced one at a time.");
 
         await File.WriteAllTextAsync(path, report.ToString(), ct);
         log.LogInformation("Probe report written to {Path}", path);
