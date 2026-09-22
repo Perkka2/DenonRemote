@@ -5,6 +5,18 @@ namespace DenonRemote.Services;
 public sealed record ProbeResult(string Method, string Url, int Status, string? ContentType, string Body, string? Error)
 {
     public bool Interesting => Error is null && Status is >= 200 and < 300 && Body.Trim().Length > 0;
+
+    /// <summary>
+    /// The receiver buckling rather than answering: it refused the connection, or
+    /// took too long, or handed back a 500 it does not mean. Worth another go after
+    /// a pause; a 403 or a 404 is an answer and is not.
+    /// </summary>
+    public bool Dropped =>
+        (Error is not null &&
+            (Error.Contains("refused", StringComparison.OrdinalIgnoreCase) ||
+             Error.Contains("Timeout", StringComparison.OrdinalIgnoreCase) ||
+             Error.Contains("SSL", StringComparison.OrdinalIgnoreCase)))
+        || Status is 500 or 503;
 }
 
 /// <summary>
@@ -38,6 +50,17 @@ public sealed class HttpProbe(ILogger<HttpProbe> log)
 
     public async Task<ProbeResult> SendAsync(
         string method, string url, string? body, CancellationToken ct, int maxBody = MaxBody)
+    {
+        // One at a time, with a pause, and another go if the receiver drops it.
+        // See ReceiverGate: hammering these units makes them stop answering, and
+        // every setting after that point looks like one they do not have.
+        var host = Uri.TryCreate(url, UriKind.Absolute, out var parsed) ? parsed.Host : url;
+        return await ReceiverGate.RunAsync(host, () => SendOnceAsync(method, url, body, ct, maxBody),
+            r => r.Dropped, ct);
+    }
+
+    private static async Task<ProbeResult> SendOnceAsync(
+        string method, string url, string? body, CancellationToken ct, int maxBody)
     {
         try
         {
