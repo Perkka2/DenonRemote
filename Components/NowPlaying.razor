@@ -1,0 +1,51 @@
+@* What the HEOS side of the receiver is playing, plus transport. *@
+
+<section class="panel">
+    <h2>Now playing</h2>
+
+    @if (Heos is null || !Heos.State.Connected)
+    {
+        <p class="muted-text">HEOS not connected.</p>
+    }
+    else if (!Heos.State.HasTrack)
+    {
+        <p class="muted-text">Nothing playing.</p>
+    }
+    else
+    {
+        <div class="track">
+            @if (!string.IsNullOrWhiteSpace(Heos.State.ImageUrl))
+            {
+                <img class="cover" src="@Heos.State.ImageUrl" alt="" />
+            }
+            <div class="track-text">
+                <strong>@(Heos.State.Song ?? Heos.State.Station)</strong>
+                @if (!string.IsNullOrWhiteSpace(Heos.State.Artist))
+                {
+                    <span>@Heos.State.Artist</span>
+                }
+                @if (!string.IsNullOrWhiteSpace(Heos.State.Album))
+                {
+                    <span class="dimmer">@Heos.State.Album</span>
+                }
+            </div>
+        </div>
+
+        <div class="transport">
+            <button class="step" @onclick="() => Heos.Previous()">&#9198;</button>
+            <button class="step wide" @onclick="() => Heos.TogglePlay()">
+                @(Playing ? "⏸" : "▶")
+            </button>
+            <button class="step" @onclick="() => Heos.Next()">&#9197;</button>
+        </div>
+    }
+</section>
+
+@code {
+    [Parameter, EditorRequired] public DenonClient Client { get; set; } = default!;
+
+    private HeosClient? Heos => Client.Heos;
+
+    private bool Playing =>
+        string.Equals(Heos?.State.PlayState, "play", StringComparison.OrdinalIgnoreCase);
+}

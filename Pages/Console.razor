@@ -1,0 +1,350 @@
+@page "/console"
+@implements IDisposable
+@inject DenonRegistry Registry
+@inject HttpProbe Probe
+
+<div class="head">
+    <h1>Protocol console</h1>
+    <a class="gear" href="">Back</a>
+</div>
+
+<section class="panel tight">
+    <div class="receivers">
+        @foreach (var candidate in Registry.Clients)
+        {
+            var current = candidate;
+            <button class="chip @(current == client ? "active" : "")" @onclick="() => Select(current)">
+                <span class="dot @(current.State.Online ? "up" : "down")"></span>
+                @current.Config.Name
+            </button>
+        }
+    </div>
+
+    <p class="muted-text">
+        Everything the app sends and everything the receiver pushes back. Useful for
+        working out commands that aren't in the protocol document — the graphic EQ, for one.
+    </p>
+</section>
+
+@if (client is null)
+{
+    <div class="empty"><p>No receiver configured.</p></div>
+}
+else
+{
+    <section class="panel tight">
+        <div class="addrow">
+            <input class="text mono command-input" placeholder="PSBAS ?" @bind="command" @bind:event="oninput"
+                   @onkeydown="OnKeyDown" />
+            <button class="primary" disabled="@(string.IsNullOrWhiteSpace(command))" @onclick="SendCommand">Send</button>
+        </div>
+
+        <div class="quick-row wrap">
+            @foreach (var probe in Probes)
+            {
+                var current = probe;
+                <button class="pill" @onclick="() => Run(current)">@current</button>
+            }
+        </div>
+    </section>
+
+    <section class="panel tight">
+        <div class="quick-head">
+            <h2>HTTP probe</h2>
+            <div class="toggle-row">
+                <button class="pill @(sweeping ? "active" : "")" disabled="@(sweeping || fetchingUi)" @onclick="SweepAsync">
+                    @(sweeping ? "Sweeping…" : "Discovery sweep")
+                </button>
+                <button class="pill @(fetchingUi ? "active" : "")" disabled="@(sweeping || fetchingUi)" @onclick="FetchUiAsync">
+                    @(fetchingUi ? "Fetching…" : "Fetch setup UI")
+                </button>
+            </div>
+        </div>
+
+        <p class="muted-text">
+            The graphic EQ isn't in the control protocol — the receiver's setup UI drives it
+            over HTTP. The sweep asks every likely endpoint and writes what came back to a
+            file in the project folder.
+        </p>
+
+        <div class="addrow">
+            <select class="text narrow" @bind="probeMethod">
+                <option>GET</option>
+                <option>POST</option>
+            </select>
+            <input class="text mono probe-url" placeholder="@DefaultUrl" @bind="probeUrl" @bind:event="oninput" />
+            <button class="primary" disabled="@(probing || string.IsNullOrWhiteSpace(probeUrl))" @onclick="ProbeAsync">
+                @(probing ? "…" : "Fetch")
+            </button>
+        </div>
+
+        @if (probeMethod == "POST")
+        {
+            <input class="text mono probe-body" placeholder="request body (XML)" @bind="probeBody" @bind:event="oninput" />
+        }
+
+        @if (!string.IsNullOrEmpty(probeStatus))
+        {
+            <p class="muted-text">@probeStatus</p>
+        }
+
+        @if (!string.IsNullOrEmpty(probeBodyOut))
+        {
+            <pre class="log probe-out">@probeBodyOut</pre>
+        }
+    </section>
+
+    <section class="panel tight">
+        <div class="quick-head">
+            <h2>Command results</h2>
+            <button class="pill" @onclick="() => client.ClearStatuses()">Clear</button>
+        </div>
+
+        <p class="muted-text">
+            Every setting the app changes is followed by a query. Anything the receiver
+            doesn't answer is listed here as unsupported rather than left looking applied.
+        </p>
+
+        @if (client.Statuses.Count == 0)
+        {
+            <p class="muted-text">Nothing sent yet.</p>
+        }
+        else
+        {
+            <div class="log">
+                @foreach (var status in client.Statuses.Take(30))
+                {
+                    <div class="log-line @OutcomeClass(status.Outcome)">
+                        <span class="log-time">@status.At.ToString("HH:mm:ss")</span>
+                        <span class="log-arrow">@Mark(status.Outcome)</span>
+                        <span class="log-text">@status.Describe</span>
+                    </div>
+                }
+            </div>
+        }
+    </section>
+
+    <section class="panel tight">
+        <div class="quick-head">
+            <h2>Traffic</h2>
+            <div class="toggle-row">
+                <input class="text narrow" placeholder="filter" @bind="filter" @bind:event="oninput" />
+                <button class="pill @(paused ? "active" : "")" @onclick="() => paused = !paused">
+                    @(paused ? "Paused" : "Live")
+                </button>
+                <button class="pill" @onclick="() => client.ClearLog()">Clear</button>
+            </div>
+        </div>
+
+        <div class="log">
+            @foreach (var entry in Lines)
+            {
+                <div class="log-line @(entry.Outgoing ? "out" : "in")">
+                    <span class="log-time">@entry.Time</span>
+                    <span class="log-arrow">@entry.Arrow</span>
+                    <span class="log-text">@entry.Text</span>
+                </div>
+            }
+            @if (Lines.Count == 0)
+            {
+                <p class="muted-text">Nothing yet.</p>
+            }
+        </div>
+    </section>
+}
+
+@code {
+    private static readonly string[] Probes =
+        ["PW?", "MV?", "MS?", "PSMULTEQ: ?", "PSBAS ?", "CV?", "SLP?", "ECO?", "DIM ?", "VSMONI ?", "TFAN?"];
+
+    private DenonClient? client;
+    private string command = "";
+    private string probeMethod = "GET";
+    private string probeUrl = "";
+    private string probeBody = "";
+    private string probeStatus = "";
+    private string probeBodyOut = "";
+    private bool probing;
+    private bool sweeping;
+    private bool fetchingUi;
+    private string filter = "";
+    private bool paused;
+    private Timer? repaint;
+    private bool dirty;
+
+    protected override void OnInitialized()
+    {
+        Registry.Changed += OnRegistryChanged;
+        client = Registry.Clients.FirstOrDefault();
+        Attach();
+
+        // The log can move fast; repaint on a timer rather than per line.
+        repaint = new Timer(_ =>
+        {
+            if (!dirty || paused) return;
+            dirty = false;
+            InvokeAsync(StateHasChanged);
+        }, null, TimeSpan.FromMilliseconds(250), TimeSpan.FromMilliseconds(250));
+    }
+
+    private IReadOnlyList<LogEntry> Lines
+    {
+        get
+        {
+            if (client is null) return [];
+            var lines = client.Log.AsEnumerable().Reverse();
+            if (!string.IsNullOrWhiteSpace(filter))
+                lines = lines.Where(l => l.Text.Contains(filter, StringComparison.OrdinalIgnoreCase));
+            return lines.Take(200).ToList();
+        }
+    }
+
+    private void Select(DenonClient chosen)
+    {
+        Detach();
+        client = chosen;
+        Attach();
+    }
+
+    private void Attach()
+    {
+        if (client is null) return;
+        client.LogAppended += OnLogAppended;
+        client.StateChanged += OnClientStateChanged;
+    }
+
+    private void Detach()
+    {
+        if (client is null) return;
+        client.LogAppended -= OnLogAppended;
+        client.StateChanged -= OnClientStateChanged;
+    }
+
+    private void OnClientStateChanged(DenonClient changed) => dirty = true;
+
+    private void OnLogAppended() => dirty = true;
+
+    private void OnRegistryChanged()
+    {
+        if (client is null || Registry.Find(client.Config.Id) is null)
+        {
+            Detach();
+            client = Registry.Clients.FirstOrDefault();
+            Attach();
+        }
+        InvokeAsync(StateHasChanged);
+    }
+
+    private void OnKeyDown(KeyboardEventArgs args)
+    {
+        if (args.Key == "Enter") SendCommand();
+    }
+
+    private void SendCommand()
+    {
+        var text = command.Trim();
+        if (text.Length == 0) return;
+        Run(text);
+        command = "";
+    }
+
+    private string DefaultUrl =>
+        client is null ? "http://receiver/ajax/audio/get_config?type=9"
+                       : $"http://{client.Config.Host}/ajax/audio/get_config?type=9";
+
+    private async Task ProbeAsync()
+    {
+        probing = true;
+        probeStatus = "";
+        probeBodyOut = "";
+        try
+        {
+            var result = await Probe.SendAsync(probeMethod, probeUrl.Trim(),
+                probeMethod == "POST" ? probeBody : null, CancellationToken.None);
+
+            probeStatus = result.Error is not null
+                ? "Failed: " + result.Error
+                : $"{result.Status} {result.ContentType}";
+            probeBodyOut = result.Body;
+        }
+        finally
+        {
+            probing = false;
+        }
+    }
+
+    private async Task SweepAsync()
+    {
+        if (client is null) return;
+
+        sweeping = true;
+        probeStatus = "";
+        probeBodyOut = "";
+        try
+        {
+            var path = await Probe.SweepAsync(client.Config.Host, AppPaths.Discovery, CancellationToken.None);
+            probeStatus = "Report written to " + path;
+            probeBodyOut = await File.ReadAllTextAsync(path);
+        }
+        catch (Exception ex)
+        {
+            probeStatus = "Sweep failed: " + ex.Message;
+        }
+        finally
+        {
+            sweeping = false;
+        }
+    }
+
+    private async Task FetchUiAsync()
+    {
+        if (client is null) return;
+
+        fetchingUi = true;
+        probeStatus = "";
+        probeBodyOut = "";
+        try
+        {
+            var path = await Probe.FetchUiAsync(client.Config.Host, AppPaths.Discovery, CancellationToken.None);
+            probeStatus = "Report written to " + path;
+            probeBodyOut = await File.ReadAllTextAsync(path);
+        }
+        catch (Exception ex)
+        {
+            probeStatus = "Fetch failed: " + ex.Message;
+        }
+        finally
+        {
+            fetchingUi = false;
+        }
+    }
+
+    private static string OutcomeClass(CommandOutcome outcome) => outcome switch
+    {
+        CommandOutcome.Confirmed => "ok",
+        CommandOutcome.Mismatch => "warn",
+        CommandOutcome.NoResponse => "bad",
+        _ => "",
+    };
+
+    private static string Mark(CommandOutcome outcome) => outcome switch
+    {
+        CommandOutcome.Confirmed => "\u2713",
+        CommandOutcome.Mismatch => "\u2260",
+        CommandOutcome.NoResponse => "\u00D7",
+        _ => "\u2026",
+    };
+
+    private void Run(string text)
+    {
+        client?.Send(text);
+        dirty = true;
+    }
+
+    public void Dispose()
+    {
+        Registry.Changed -= OnRegistryChanged;
+        Detach();
+        repaint?.Dispose();
+    }
+}

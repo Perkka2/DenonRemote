@@ -1,0 +1,40 @@
+@page "/"
+@namespace DenonRemote.Pages
+@addTagHelper *, Microsoft.AspNetCore.Mvc.TagHelpers
+@{
+    Layout = null;
+}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1, user-scalable=no" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="theme-color" content="#0b0e12" />
+    <title>Denon Remote</title>
+    <base href="~/" />
+    <link rel="icon" href="favicon.svg" type="image/svg+xml" />
+    <link rel="manifest" href="manifest.json" />
+    <link rel="stylesheet" href="css/site.css" />
+</head>
+<body>
+    <component type="typeof(App)" render-mode="ServerPrerendered" />
+
+    @* Blazor injects its own reconnect overlay when this element is absent, and that
+       overlay keeps swallowing taps after the connection is back. Supplying an inert
+       one leaves our own banner as the only thing on screen. *@
+    <div id="components-reconnect-modal"></div>
+
+    <div id="reconnect-banner">
+        <span id="reconnect-label">Reconnecting</span>
+    </div>
+
+    <div id="blazor-error-ui">
+        Something went wrong. <a href="" class="reload">Reload</a>
+    </div>
+
+    <script src="_framework/blazor.server.js" autostart="false"></script>
+    <script src="js/reconnect.js"></script>
+</body>
+</html>

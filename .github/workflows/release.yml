@@ -1,0 +1,85 @@
+name: Release
+
+# Builds every target and attaches the zips to a GitHub release.
+#   git tag v1.0.0 && git push origin v1.0.0
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Each build runs on its own OS so ReadyToRun can pre-compile for it,
+          # which is what keeps startup quick.
+          - { os: macos-14,      rid: osx-arm64 }
+          - { os: macos-13,      rid: osx-x64 }
+          - { os: windows-latest, rid: win-x64 }
+          - { os: windows-latest, rid: win-arm64 }
+          - { os: ubuntu-latest,  rid: linux-x64 }
+          - { os: ubuntu-latest,  rid: linux-arm64 }
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Self-test
+        shell: bash
+        run: dotnet run -c Release --self-test
+
+      - name: Publish
+        shell: bash
+        run: |
+          dotnet publish -c Release -r ${{ matrix.rid }} -o "out/DenonRemote-${{ matrix.rid }}" \
+            --nologo --self-contained \
+            -p:PublishReadyToRun=${{ startsWith(matrix.rid, 'win-arm64') && 'false' || 'true' }}
+          rm -f out/DenonRemote-${{ matrix.rid }}/*.pdb
+
+      - name: Package
+        shell: bash
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          [ "$version" = "$GITHUB_REF_NAME" ] && version=dev
+          mkdir -p dist
+          ( cd out && zip -qr "../dist/DenonRemote-$version-${{ matrix.rid }}.zip" . )
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: DenonRemote-${{ matrix.rid }}
+          path: dist/*.zip
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: artifacts/**/*.zip
+          body: |
+            Self-contained builds — nothing to install, the .NET runtime ships alongside.
+
+            Unzip the folder, run `DenonRemote` inside it, then open http://localhost:5080.
+            From a phone on the same wifi, use the address the app prints on startup.
+
+            These builds are unsigned:
+            * **macOS** — right-click the app and choose Open the first time, or
+              `xattr -d com.apple.quarantine DenonRemote`.
+            * **Windows** — SmartScreen warns; More info → Run anyway.
+
+            Allow the incoming-connection prompt on first run, or phones won't reach it.

@@ -1,0 +1,259 @@
+@page "/"
+@implements IDisposable
+@inject DenonRegistry Registry
+@inject NavigationManager Nav
+
+<div class="head">
+    <div class="receivers">
+        @foreach (var candidate in Registry.Clients)
+        {
+            var current = candidate;
+            <button class="chip @(current == client ? "active" : "")" @onclick="() => Select(current)">
+                <span class="dot @(current.State.Online ? "up" : "down")"></span>
+                @current.Config.Name
+            </button>
+        }
+    </div>
+    <a class="gear" href="setup" title="Receivers">Setup</a>
+</div>
+
+@if (client is null)
+{
+    <div class="empty">
+        <p>No receiver configured yet.</p>
+        <a class="primary" href="setup">Find my receivers</a>
+    </div>
+}
+else
+{
+    @if (!client.State.Online && client.Asleep)
+    {
+        <div class="banner standby">
+            @client.Config.Name is in eco standby — it stops answering the control port until it wakes.
+            <button class="inline" @onclick="WakeAsync">Wake it</button>
+        </div>
+    }
+    else if (!client.State.Online)
+    {
+        <div class="banner">
+            Not connected to @client.Config.Host — retrying.
+            @if (!string.IsNullOrWhiteSpace(client.State.Error))
+            {
+                <span class="why">@client.State.Error</span>
+            }
+        </div>
+    }
+    else if (client.State.Power == false)
+    {
+        <div class="banner standby">
+            Receiver is in standby.
+            <button class="inline" @onclick="() => client.SetStandby(true)">Wake it</button>
+        </div>
+    }
+
+    @if (client.LastFailure is { } failure)
+    {
+        <div class="banner warn">
+            @failure.Describe
+            <button class="inline" @onclick="() => client.ClearStatuses()">Dismiss</button>
+        </div>
+    }
+
+    <nav class="sections">
+        @foreach (var candidate in SectionsFor(client))
+        {
+            var current = candidate;
+            <button class="ztab @(section == current ? "active" : "")" @onclick="() => SelectSection(current)">
+                @Title(current)
+            </button>
+        }
+    </nav>
+
+    @if (section == "sound")
+    {
+        <SoundPanel Client="client" />
+        <SurroundPanel Client="client" />
+    }
+    else if (section == "eq")
+    {
+        <GraphicEqPanel Client="client" />
+    }
+    else if (section == "info")
+    {
+        <InfoPanel Client="client" />
+    }
+    else if (section == "setup")
+    {
+        <SetupBrowser Client="client" />
+    }
+    else if (section == "system")
+    {
+        <SystemPanel Client="client" />
+    }
+    else if (section == "menu")
+    {
+        <MenuPad Client="client" />
+    }
+    else if (section == "playing")
+    {
+        <NowPlaying Client="client" />
+    }
+    else
+    {
+        @if (client.Zones.Count > 1)
+        {
+            <div class="zones">
+                @foreach (var candidate in client.Zones)
+                {
+                    var current = candidate;
+                    <button class="ztab @(zone == current ? "active" : "")" @onclick="() => SelectZone(current)">
+                        @client.Profile.ZoneName(current)
+                    </button>
+                }
+                <span class="now">@DenonCatalog.LabelForSource(client.SourcesFor(zone), client.State.Zone(zone).Source)</span>
+            </div>
+        }
+
+        <ZonePanel Client="client" Zone="zone" />
+        <QuickSelectBar Client="client" Zone="zone" />
+        <ScenesBar Client="client" />
+        <SourceGrid Client="client" Zone="zone" />
+
+        @if (zone == 1 && TunerSelected(client))
+        {
+            <TunerPanel Client="client" />
+        }
+
+        @if (zone == 1)
+        {
+            <SoundModeGrid Client="client" />
+            <GuardBar Client="client" />
+        }
+
+        <div class="foot">
+            <button class="ghost" @onclick="() => client.Refresh()">Refresh</button>
+            <button class="ghost" @onclick="() => client.SetStandby(false)">All off (standby)</button>
+        </div>
+    }
+}
+
+@code {
+    private DenonClient? client;
+    private int zone = 1;
+    private string section = "remote";
+
+    protected override void OnInitialized()
+    {
+        Registry.Changed += OnRegistryChanged;
+        Subscribe();
+        client = Registry.Clients.FirstOrDefault();
+        RestoreFromUrl();
+    }
+
+    // The view lives in the URL, so a reconnect that has to reload the page comes
+    // back to the same receiver, zone and section rather than dumping you at the top.
+    private void RestoreFromUrl()
+    {
+        var query = System.Web.HttpUtility.ParseQueryString(new Uri(Nav.Uri).Query);
+
+        if (query["r"] is { } receiverId && Registry.Find(receiverId) is { } saved) client = saved;
+
+        if (query["s"] is { } savedSection && client is not null && SectionsFor(client).Contains(savedSection))
+            section = savedSection;
+
+        if (int.TryParse(query["z"], out var savedZone) && savedZone is >= 1 and <= 3)
+            zone = savedZone;
+    }
+
+    private void RememberInUrl()
+    {
+        if (client is null) return;
+
+        var uri = Nav.GetUriWithQueryParameters(new Dictionary<string, object?>
+        {
+            ["r"] = client.Config.Id,
+            ["s"] = section,
+            ["z"] = zone == 1 ? null : zone,
+        });
+
+        // Replace, so the back button doesn't walk through every tab you touched.
+        Nav.NavigateTo(uri, forceLoad: false, replace: true);
+    }
+
+    private void SelectSection(string name)
+    {
+        section = name;
+        RememberInUrl();
+    }
+
+    private void SelectZone(int number)
+    {
+        zone = number;
+        RememberInUrl();
+    }
+
+    private static IReadOnlyList<string> SectionsFor(DenonClient candidate)
+    {
+        var sections = new List<string> { "remote", "sound" };
+        if (candidate.Eq.Available) sections.Add("eq");
+        sections.Add("system");
+        sections.Add("menu");
+        if (candidate.Profile.Heos) sections.Add("playing");
+        if (candidate.Profile.SetupApi) { sections.Add("info"); sections.Add("setup"); }
+        return sections;
+    }
+
+    private static string Title(string name) => name switch
+    {
+        "sound" => "Sound",
+        "eq" => "EQ",
+        "info" => "Signal",
+        "setup" => "Setup",
+        "system" => "System",
+        "menu" => "Menu",
+        "playing" => "Playing",
+        _ => "Remote",
+    };
+
+    private static bool TunerSelected(DenonClient candidate) =>
+        string.Equals(candidate.State.Main.Source, "TUNER", StringComparison.OrdinalIgnoreCase);
+
+    private void Select(DenonClient chosen)
+    {
+        client = chosen;
+        zone = 1;
+        if (!SectionsFor(chosen).Contains(section)) section = "remote";
+        RememberInUrl();
+    }
+
+    private async Task WakeAsync()
+    {
+        if (client is not null) await client.WakeAsync();
+    }
+
+    private void Subscribe()
+    {
+        foreach (var candidate in Registry.Clients)
+        {
+            candidate.StateChanged -= OnStateChanged;
+            candidate.StateChanged += OnStateChanged;
+        }
+    }
+
+    private void OnRegistryChanged()
+    {
+        Subscribe();
+        if (client is null || Registry.Find(client.Config.Id) is null)
+            client = Registry.Clients.FirstOrDefault();
+        InvokeAsync(StateHasChanged);
+    }
+
+    private void OnStateChanged(DenonClient changed) => InvokeAsync(StateHasChanged);
+
+    public void Dispose()
+    {
+        Registry.Changed -= OnRegistryChanged;
+        foreach (var candidate in Registry.Clients)
+            candidate.StateChanged -= OnStateChanged;
+    }
+}

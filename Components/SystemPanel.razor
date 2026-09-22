@@ -1,0 +1,54 @@
+@* Unit-wide settings: power behaviour, the front panel, and HDMI routing. *@
+
+<section class="panel">
+    <h2>Power &amp; display</h2>
+
+    <OptionRow Label="ECO mode" Options="SystemCatalog.Eco" Current="@System.Eco"
+               Disabled="@Disabled" Selected="Client.SetEco" />
+    <OptionRow Label="Dimmer" Options="SystemCatalog.Dimmer" Current="@System.Dimmer"
+               Disabled="@Disabled" Selected="Client.SetDimmer" />
+    <OptionRow Label="Auto standby" Options="SystemCatalog.AutoStandby" Current="@System.AutoStandby"
+               Disabled="@Disabled" Selected="Client.SetAutoStandby" />
+
+    @if (Unreported.Count > 0)
+    {
+        <p class="muted-text">Not reported by this unit: @string.Join(", ", Unreported).</p>
+    }
+</section>
+
+<section class="panel">
+    <h2>Video</h2>
+
+    <OptionRow Label="Monitor out" Options="SystemCatalog.MonitorOut" Current="@System.MonitorOut"
+               Disabled="@Disabled" Selected="Client.SetMonitorOut" />
+    <OptionRow Label="HDMI audio" Options="SystemCatalog.HdmiAudio" Current="@System.HdmiAudio"
+               Disabled="@Disabled" Selected="Client.SetHdmiAudio" />
+    <OptionRow Label="Video select" Options="VideoSources" Current="@System.VideoSelect"
+               Disabled="@Disabled" Selected="Client.SetVideoSelect" />
+</section>
+
+@code {
+    [Parameter, EditorRequired] public DenonClient Client { get; set; } = default!;
+
+    private SystemState System => Client.State.System;
+    private bool Disabled => !Client.State.Online;
+
+    private OptionValue[] VideoSources =>
+    [
+        new("SOURCE", "Source"),
+        new("OFF", "Off"),
+        .. Client.Profile.Sources.Select(s => new OptionValue(s.Code, s.Label)),
+    ];
+
+    private List<string> Unreported
+    {
+        get
+        {
+            var missing = new List<string>();
+            if (System.Eco is null) missing.Add("ECO");
+            if (System.Dimmer is null) missing.Add("dimmer");
+            if (System.AutoStandby is null) missing.Add("auto standby");
+            return missing;
+        }
+    }
+}

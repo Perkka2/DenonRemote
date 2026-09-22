@@ -1,0 +1,376 @@
+@* The receiver's own setup documents, read live.
+
+   Values are its internal codes, translated through the table harvested from its own
+   setup UI. A setting is a dropdown where the receiver publishes what it accepts -
+   per row, since the centre channel and the subwoofer don't offer the same choices as
+   the fronts. Documents that are really a table, like input assign, are drawn as one. *@
+
+<section class="panel tight">
+    <h2>Receiver setup</h2>
+    <p class="muted-text">
+        Read straight from the receiver, in its own words. Settings that don't apply to
+        your configuration are left out, and ones it won't let you change right now are
+        shown read-only.
+    </p>
+
+    <div class="grid">
+        @foreach (var group in AjaxCatalog.Groups)
+        {
+            var current = group;
+            <button class="tile @(open == current ? "active" : "")" @onclick="() => ToggleAsync(current)">
+                @current.Label
+            </button>
+        }
+    </div>
+</section>
+
+@if (open is not null)
+{
+    <section class="panel">
+        <div class="quick-head">
+            <h2>@open.Label</h2>
+            <span class="now">@open.Section/@open.Type</span>
+        </div>
+
+        @if (!string.IsNullOrEmpty(open.Note))
+        {
+            <p class="muted-text">@open.Note</p>
+        }
+
+        @if (loading)
+        {
+            <p class="muted-text">Reading…</p>
+        }
+        else if (rows.Count == 0)
+        {
+            <p class="muted-text">This receiver didn't answer for that section.</p>
+        }
+        else if (Columns.Count > 1)
+        {
+            @* A table: one row per thing, one column per setting. Settings that belong
+               to no row in particular come first, as their own settings. *@
+            @foreach (var row in LooseRows)
+            {
+                var loose = row;
+                var looseChoices = Choices(loose);
+                <div class="setting wide">
+                    <span>@Label(loose)</span>
+                    @if (looseChoices.Count > 0 && !loose.Locked)
+                    {
+                        <select class="text" value="@loose.Value" @key="(reads, loose.Name, loose.Label)"
+                                @onchange="args => WriteAsync(loose, args)">
+                            @foreach (var choice in looseChoices)
+                            {
+                                <option value="@choice.Code" selected="@(choice.Code == loose.Value)">@choice.Text</option>
+                            }
+                        </select>
+                    }
+                    else
+                    {
+                        <span class="fact-value">@Display(loose)</span>
+                    }
+                </div>
+            }
+
+            <div class="matrix">
+                <div class="matrix-row head">
+                    <span class="matrix-name"></span>
+                    @foreach (var column in Columns)
+                    {
+                        <span class="matrix-cell">@ColumnHeading(column)</span>
+                    }
+                </div>
+
+                @foreach (var index in Indexes)
+                {
+                    var currentIndex = index;
+                    <div class="matrix-row">
+                        <span class="matrix-name">@RowName(currentIndex)</span>
+                        @foreach (var column in Columns)
+                        {
+                            var cell = Cell(currentIndex, column);
+                            <span class="matrix-cell">
+                                @if (cell is null)
+                                {
+                                    <span class="fact-value">—</span>
+                                }
+                                else if (Choices(cell).Count > 0 && !cell.Locked)
+                                {
+                                    <select class="text" value="@cell.Value" @key="(reads, currentIndex, column)"
+                                            @onchange="args => WriteAsync(cell, args)">
+                                        @foreach (var choice in Choices(cell))
+                                        {
+                                            <option value="@choice.Code" selected="@(choice.Code == cell.Value)">@choice.Text</option>
+                                        }
+                                    </select>
+                                }
+                                else
+                                {
+                                    <span class="fact-value">@Display(cell)</span>
+                                }
+                            </span>
+                        }
+                    </div>
+                }
+            </div>
+        }
+        else
+        {
+            @foreach (var row in rows)
+            {
+                var current = row;
+                var choices = Choices(current);
+                <div class="setting wide">
+                    <span>@Label(current)</span>
+                    @if (choices.Count > 0 && !current.Locked)
+                    {
+                        <select class="text" value="@current.Value" @key="(reads, current.Name, current.Index)"
+                                @onchange="args => WriteAsync(current, args)">
+                            @foreach (var choice in choices)
+                            {
+                                <option value="@choice.Code" selected="@(choice.Code == current.Value)">@choice.Text</option>
+                            }
+                        </select>
+                    }
+                    else
+                    {
+                        <span class="fact-value">@Display(current)</span>
+                        @if (current.Locked)
+                        {
+                            <span class="hint">fixed by the current setup</span>
+                        }
+                    }
+                </div>
+            }
+        }
+
+        @if (!string.IsNullOrEmpty(message))
+        {
+            <p class="muted-text">@message</p>
+        }
+    </section>
+}
+
+@code {
+    [Parameter, EditorRequired] public DenonClient Client { get; set; } = default!;
+
+    private ConfigGroup? open;
+    private IReadOnlyList<ConfigRow> rows = [];
+    private string? root;
+    private bool loading;
+    private string message = "";
+    private int reads;
+
+    // ---------------------------------------------------------------- shape
+
+    /// <summary>Indexed rows that repeat the same settings are really a table.</summary>
+    private IReadOnlyList<string> Indexes =>
+        rows.Where(r => r.Index is not null).Select(r => r.Index!).Distinct().ToList();
+
+    private IReadOnlyList<string> Columns
+    {
+        get
+        {
+            var indexed = rows.Where(r => r.Index is not null).ToList();
+            if (indexed.Count == 0) return [];
+
+            var names = indexed.Select(r => r.Name).Distinct().ToList();
+            // One setting per row is a list, not a table.
+            if (names.Count <= 1 || Indexes.Count <= 1) return [];
+
+            // The column that names each row is the row heading, not a setting of its own.
+            var heading = HeadingColumn;
+            return heading is null ? names : names.Where(n => n != heading).ToList();
+        }
+    }
+
+    /// <summary>
+    /// The column that says what each row is. Input assign carries the source's own
+    /// name in every row, which beats the harvested table: it is live, and it follows
+    /// the receiver when the user renames an input.
+    /// </summary>
+    private string? HeadingColumn => HeadingColumnOf(rows);
+
+    internal static string? HeadingColumnOf(IReadOnlyList<ConfigRow> rows)
+    {
+        var indexes = rows.Where(r => r.Index is not null).Select(r => r.Index!).Distinct().ToList();
+        if (indexes.Count <= 1) return null;
+
+        foreach (var name in rows.Where(r => r.Index is not null).Select(r => r.Name).Distinct())
+        {
+            var cells = rows.Where(r => r.Name == name && r.Index is not null).ToList();
+
+            // Free text, one per row, no two alike: that is a name and not a setting.
+            // The setup API answers settings in numeric codes, so anything that reads
+            // as a word is the receiver talking about the thing rather than about it.
+            if (cells.Count != indexes.Count) continue;
+            if (cells.Any(c => c.HasOptions || c.Value.Length == 0)) continue;
+            if (cells.Any(c => c.Value.All(char.IsDigit))) continue;
+            if (cells.Select(c => c.Value).Distinct().Count() != cells.Count) continue;
+
+            return name;
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// Settings outside the table. Input assign opens with a Contents block that repeats
+    /// the table's own columns as a summary - the same settings without a row to belong
+    /// to - so anything the table already covers is left to the table.
+    /// </summary>
+    private IReadOnlyList<ConfigRow> LooseRows =>
+        rows.Where(r => r.Index is null && !Columns.Contains(r.Name) && r.Name != HeadingColumn).ToList();
+
+    private ConfigRow? Cell(string index, string name) =>
+        rows.FirstOrDefault(r => r.Index == index && r.Name == name);
+
+    /// <summary>
+    /// The column heading is the setting's own tag. The harvested label is no use here:
+    /// in a table the receiver's UI labels each control with the row it sits in - every
+    /// input-assign dropdown is called "CBL/SAT" or "DVD" - which is what RowName wants
+    /// and the very opposite of a column heading.
+    /// </summary>
+    internal static string ColumnHeading(string name)
+    {
+        var spaced = new System.Text.StringBuilder(name.Length + 4);
+        for (var i = 0; i < name.Length; i++)
+        {
+            var upper = char.IsUpper(name[i]);
+            var startsWord = i > 0 && upper
+                && (!char.IsUpper(name[i - 1]) || (i + 1 < name.Length && char.IsLower(name[i + 1])));
+            if (startsWord) spaced.Append(' ');
+            spaced.Append(name[i]);
+        }
+        return spaced.ToString();
+    }
+
+    /// <summary>The name of the thing a row is about: which input, which speaker.</summary>
+    private string RowName(string index)
+    {
+        // What the receiver calls it right now, if the document says.
+        if (HeadingColumn is { } heading && Cell(index, heading)?.Value is { Length: > 0 } live)
+            return live;
+
+        if (open is null) return index;
+
+        // Otherwise the harvested name, and only ever this row's own.
+        foreach (var name in rows.Where(r => r.Index is not null).Select(r => r.Name).Distinct())
+        {
+            if (AjaxLabels.RowName(open.Section, open.Type, name, index) is { Length: > 0 } named)
+                return named;
+        }
+
+        return index;
+    }
+
+    // ---------------------------------------------------------------- labels
+
+    private string Label(ConfigRow row) => open is null
+        ? row.Label
+        : AjaxLabels.Label(open.Section, open.Type, row.Name, row.Index, row.Label);
+
+    /// <summary>How to name a setting in a sentence. In a table it takes both axes.</summary>
+    private string Describe(ConfigRow row) =>
+        Columns.Count > 1 && row.Index is not null
+            ? $"{ColumnHeading(row.Name)} for {RowName(row.Index)}"
+            : Label(row);
+
+    private string Display(ConfigRow row)
+    {
+        if (row.Value.Length == 0) return "—";
+
+        var published = Choices(row).FirstOrDefault(o => o.Code == row.Value);
+        if (published is not null) return published.Text;
+
+        return open is null ? row.Value : AjaxLabels.Value(open.Section, open.Type, row.Name, row.Value, row.Index);
+    }
+
+    /// <summary>
+    /// What this row may be set to. The receiver's own list of codes wins; the harvested
+    /// table supplies the words for them, per row where rows differ.
+    /// </summary>
+    private IReadOnlyList<ConfigChoice> Choices(ConfigRow row) => WithCurrent(row, Offered(row));
+
+    /// <summary>
+    /// A dropdown must be able to show where the receiver actually is. Some rows sit on
+    /// a code the receiver leaves off its own list - TV Audio's HDMI input is one - and
+    /// a select whose value matches no option renders blank, which reads as broken.
+    /// </summary>
+    private IReadOnlyList<ConfigChoice> WithCurrent(ConfigRow row, IReadOnlyList<ConfigChoice> choices)
+    {
+        if (choices.Count == 0 || row.Value.Length == 0) return choices;
+        if (choices.Any(c => c.Code == row.Value)) return choices;
+
+        var word = open is null
+            ? row.Value
+            : AjaxLabels.Value(open.Section, open.Type, row.Name, row.Value, row.Index);
+
+        return choices.Prepend(new ConfigChoice(row.Value, word)).ToList();
+    }
+
+    private IReadOnlyList<ConfigChoice> Offered(ConfigRow row)
+    {
+        if (open is null) return row.Options;
+
+        var known = AjaxLabels.Choices(open.Section, open.Type, row.Name, row.Index);
+        if (row.Options.Count > 0)
+        {
+            if (known.Count == 0) return row.Options;
+
+            // Codes from the document, words from the table.
+            var words = known.ToDictionary(k => k.Key, k => k.Value);
+            return row.Options
+                .Select(o => new ConfigChoice(o.Code, words.TryGetValue(o.Code, out var text) ? text : o.Text))
+                .ToList();
+        }
+
+        return known.Select(c => new ConfigChoice(c.Key, c.Value)).ToList();
+    }
+
+    // ---------------------------------------------------------------- actions
+
+    private async Task ToggleAsync(ConfigGroup group)
+    {
+        if (open == group) { open = null; rows = []; return; }
+
+        open = group;
+        rows = [];
+        message = "";
+        loading = true;
+        try
+        {
+            (rows, root) = await Client.ReadConfigAsync(group);
+            reads++;
+        }
+        finally
+        {
+            loading = false;
+        }
+    }
+
+    private async Task WriteAsync(ConfigRow row, ChangeEventArgs args)
+    {
+        if (open is null || root is null) return;
+
+        var value = args.Value?.ToString();
+        if (string.IsNullOrEmpty(value)) return;
+
+        var ok = await Client.WriteConfigAsync(open, root, row, value);
+        var shown = Choices(row).FirstOrDefault(c => c.Code == value)?.Text ?? value;
+        var what = Describe(row);
+
+        // Read it back rather than trust the write: a setting the receiver won't take
+        // simply comes back unchanged, and saying so beats pretending.
+        (rows, root) = await Client.ReadConfigAsync(open);
+        // The read may put a dropdown back to what it was. Blazor won't touch a <select>
+        // whose bound value it thinks is unchanged, so the control would sit there
+        // showing the value the receiver just declined: make them new elements instead.
+        reads++;
+        var after = rows.FirstOrDefault(r => r.Name == row.Name && r.Index == row.Index);
+
+        message = !ok ? $"{what} was refused by the receiver."
+            : after?.Value == value ? $"{what} set to {shown}."
+            : $"{what} didn't change — the receiver still reports {Display(after ?? row)}.";
+    }
+}

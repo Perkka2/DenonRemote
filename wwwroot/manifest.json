@@ -1,0 +1,8 @@
+{
+  "name": "Denon Remote",
+  "short_name": "Denon",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#0b0e12",
+  "theme_color": "#0b0e12"
+}

@@ -1,0 +1,75 @@
+@* Tone, channel trims and the Audyssey family - the settings buried deepest in
+   the receiver's own on-screen menu. *@
+
+<section class="panel">
+    <h2>Tone</h2>
+
+    <div class="toggle-row">
+        <button class="pill @(Audio.ToneControl == true ? "active" : "")"
+                disabled="@Disabled"
+                @onclick="() => Client.SetToneControl(Audio.ToneControl != true)">
+            Tone control @(Audio.ToneControl == true ? "on" : "off")
+        </button>
+        @if (ToneLocked)
+        {
+            <span class="hint">Direct modes bypass tone control</span>
+        }
+    </div>
+
+    <LevelSlider Label="Bass" Value="Audio.Bass" Min="44" Max="56" Step="1"
+                 Disabled="@(Disabled || ToneLocked)" ValueChanged="Client.SetBass" />
+    <LevelSlider Label="Treble" Value="Audio.Treble" Min="44" Max="56" Step="1"
+                 Disabled="@(Disabled || ToneLocked)" ValueChanged="Client.SetTreble" />
+    <LevelSlider Label="Subwoofer" Value="Audio.Subwoofer" Disabled="@Disabled"
+                 ValueChanged="Client.SetSubwoofer" />
+    @if (Audio.Dialog is not null)
+    {
+        <LevelSlider Label="Dialogue" Value="Audio.Dialog" Disabled="@Disabled"
+                     ValueChanged="Client.SetDialog" />
+    }
+</section>
+
+<section class="panel">
+    <h2>Audyssey</h2>
+
+    <div class="toggle-row">
+        <button class="pill @(Audio.DynamicEq == true ? "active" : "")"
+                disabled="@Disabled"
+                @onclick="() => Client.SetDynamicEq(Audio.DynamicEq != true)">
+            Dynamic EQ @(Audio.DynamicEq == true ? "on" : "off")
+        </button>
+    </div>
+
+    <OptionRow Label="MultEQ" Options="DenonCatalog.MultEqModes" Current="@Audio.MultEq"
+               Disabled="@Disabled" Selected="Client.SetMultEq" />
+    <OptionRow Label="Dyn. Volume" Options="DenonCatalog.DynamicVolumes" Current="@Audio.DynamicVolume"
+               Disabled="@Disabled" Selected="Client.SetDynamicVolume" />
+    <OptionRow Label="Restorer" Options="DenonCatalog.RestorerModes" Current="@Audio.Restorer"
+               Disabled="@Disabled" Selected="Client.SetRestorer" />
+</section>
+
+@if (Audio.ChannelOrder.Count > 0)
+{
+    <section class="panel">
+        <h2>Channel levels</h2>
+        @foreach (var channel in Audio.ChannelOrder)
+        {
+            var code = channel;
+            <LevelSlider Label="@DenonCatalog.LabelForChannel(code)"
+                         Value="Audio.Channels[code]"
+                         Disabled="@Disabled"
+                         ValueChanged="value => Client.SetChannelLevel(code, value)" />
+        }
+    </section>
+}
+
+@code {
+    [Parameter, EditorRequired] public DenonClient Client { get; set; } = default!;
+
+    private AudioState Audio => Client.State.Audio;
+    private bool Disabled => !Client.State.Online || Client.State.Main.Power != true;
+
+    // Bass and treble do nothing in Direct / Pure Direct.
+    private bool ToneLocked =>
+        Client.State.SoundMode?.Contains("DIRECT", StringComparison.OrdinalIgnoreCase) == true;
+}

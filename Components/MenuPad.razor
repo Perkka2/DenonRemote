@@ -1,0 +1,32 @@
+@* Cursor pad for the receiver's on-screen menu, so setup screens don't need the
+   physical remote. *@
+
+<section class="panel">
+    <h2>On-screen menu</h2>
+
+    <div class="pad">
+        <button class="pad-btn up" disabled="@Disabled" @onclick='() => Press("MNCUP")'>&#9650;</button>
+        <button class="pad-btn left" disabled="@Disabled" @onclick='() => Press("MNCLT")'>&#9664;</button>
+        <button class="pad-btn enter" disabled="@Disabled" @onclick='() => Press("MNENT")'>OK</button>
+        <button class="pad-btn right" disabled="@Disabled" @onclick='() => Press("MNCRT")'>&#9654;</button>
+        <button class="pad-btn down" disabled="@Disabled" @onclick='() => Press("MNCDN")'>&#9660;</button>
+    </div>
+
+    <div class="pad-extra">
+        <button class="ghost" disabled="@Disabled" @onclick="ToggleMenu">
+            @(Client.State.MenuOpen ? "Close menu" : "Menu")
+        </button>
+        <button class="ghost" disabled="@Disabled" @onclick='() => Press("MNRTN")'>Back</button>
+        <button class="ghost" disabled="@Disabled" @onclick='() => Press("MNOPT")'>Option</button>
+    </div>
+</section>
+
+@code {
+    [Parameter, EditorRequired] public DenonClient Client { get; set; } = default!;
+
+    private bool Disabled => !Client.State.Online;
+
+    private void Press(string code) => Client.MenuCommand(code);
+
+    private void ToggleMenu() => Press(Client.State.MenuOpen ? "MNMEN OFF" : "MNMEN ON");
+}

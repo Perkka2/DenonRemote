@@ -1,0 +1,39 @@
+@* The rest of the Surround Parameter menu. Which parameters apply depends on the
+   sound mode, so by default we show only the ones the receiver answered for. *@
+
+<section class="panel">
+    <div class="quick-head">
+        <h2>Surround parameters</h2>
+        <button class="pill @(showAll ? "active" : "")" @onclick="() => showAll = !showAll">
+            @(showAll ? "Applicable only" : "Show all")
+        </button>
+    </div>
+
+    @if (Visible.Count == 0)
+    {
+        <p class="muted-text">
+            The receiver hasn't reported any of these for the current sound mode.
+            <button class="inline" @onclick="() => Client.Refresh()">Ask again</button>
+        </p>
+    }
+    else
+    {
+        @foreach (var spec in Visible)
+        {
+            <ParameterControl Client="Client" Spec="spec" Disabled="@(Disabled || !Applies(spec))" />
+        }
+    }
+</section>
+
+@code {
+    [Parameter, EditorRequired] public DenonClient Client { get; set; } = default!;
+
+    private bool showAll;
+
+    private bool Disabled => !Client.State.Online || Client.State.Main.Power != true;
+
+    private bool Applies(ParameterSpec spec) => Client.Parameter(spec.Key) is not null;
+
+    private IReadOnlyList<ParameterSpec> Visible =>
+        showAll ? SurroundParameters.All : SurroundParameters.All.Where(Applies).ToList();
+}
