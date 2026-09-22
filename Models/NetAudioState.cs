@@ -27,7 +27,12 @@ public sealed class NetAudioState
     /// <summary>True when the receiver says it has album art to serve.</summary>
     public bool HasArt { get; set; }
 
-    public bool Repeat { get; set; }
+    /// <summary>
+    /// Off, one track, or the whole list. The receiver answers OFF, ONE or ALL - not
+    /// ON - so reading this as a yes/no left repeat looking permanently off.
+    /// </summary>
+    public RepeatMode Repeat { get; set; }
+
     public bool Shuffle { get; set; }
 
     /// <summary>True once a document has been read, so the panel can tell apart
@@ -48,4 +53,39 @@ public sealed class NetAudioState
         Lines.Skip(1).Where(line => line.Length > 0);
 
     public bool Idle => Lines.All(line => line.Length == 0);
+
+    /// <summary>
+    /// Whether the screen is playing something rather than listing things.
+    ///
+    /// This is how the receiver's own web UI decides, verbatim: the first line says
+    /// "Now Playing". It matters because the buttons mean different things in the two
+    /// modes - while playing the receiver reuses its cursor commands as transport, so
+    /// the up arrow is the rewind button and left and right do nothing at all.
+    /// </summary>
+    public bool Playing => Lines.Count > 0 && Lines[0].Contains("Playing", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// How many pages the list has, from the "[2/9]" the receiver puts in slot 8.
+    /// Its own UI only offers the page keys above seven pages, and hides them while
+    /// playing.
+    /// </summary>
+    public int Pages
+    {
+        get
+        {
+            if (Lines.Count <= 8) return 0;
+            var parts = Lines[8].Trim('[', ']', ' ').Split('/');
+            return parts.Length == 2 && int.TryParse(parts[1], out var total) ? total : 0;
+        }
+    }
+
+    public bool CanPage => !Playing && Pages > 7;
+}
+
+/// <summary>What the receiver repeats, in its own words: OFF, ONE or ALL.</summary>
+public enum RepeatMode
+{
+    Off,
+    One,
+    All,
 }

@@ -192,7 +192,7 @@ public static class SelfTest
               <NetPlayingTitle><value>Spotify</value></NetPlayingTitle>
               <Art><value>2</value></Art>
               <NetAudioRandom><value>OFF</value></NetAudioRandom>
-              <NetAudioRepeat><value>ON</value></NetAudioRepeat>
+              <NetAudioRepeat><value>ALL</value></NetAudioRepeat>
               <InputFuncSelect><value>Online Music</value></InputFuncSelect>
             </item>
             """);
@@ -203,8 +203,21 @@ public static class SelfTest
         Check("the service is read", state.Service == "Spotify");
         Check("the input is read", state.Input == "Online Music");
         Check("art is offered", state.HasArt);
-        Check("repeat is read", state.Repeat);
+        // The receiver answers OFF, ONE or ALL - never "ON" - so reading this as a
+        // yes/no left repeat looking permanently off in the panel.
+        Check("repeat is read", state.Repeat == RepeatMode.All);
         Check("shuffle is read", !state.Shuffle);
+        Check("repeat one is read",
+            NetAudioClient.Parse(XDocument.Parse(
+                "<item><NetAudioRepeat><value>ONE</value></NetAudioRepeat></item>"))!.Repeat == RepeatMode.One);
+        Check("repeat off is read",
+            NetAudioClient.Parse(XDocument.Parse(
+                "<item><NetAudioRepeat><value>OFF</value></NetAudioRepeat></item>"))!.Repeat == RepeatMode.Off);
+
+        // Playing or browsing: the same commands mean different things, and the
+        // receiver's own UI tells them apart by the word in the first line.
+        Check("a playing screen is recognised", state.Playing);
+        Check("its page keys are hidden", !state.CanPage);
 
         // Ten slots, five used: the blank tail would otherwise draw as empty rows.
         Check("the blank tail is dropped", state.Lines.Count == 5);
@@ -214,6 +227,60 @@ public static class SelfTest
             state.Body.SequenceEqual(new[] { "Out In The Night", "Arvid Nero", "Little White Dove" }));
         Check("the cursor line is marked", state.LineFlags[2] == 1);
         Check("other lines are not", state.LineFlags[1] == 0);
+
+        // Browsing a folder. The page keys only appear past seven pages, which is
+        // where the receiver's own UI puts the line, and the slot they come from is
+        // the last one: "[ 2/ 9]".
+        var browsing = NetAudioClient.Parse(XDocument.Parse("""
+            <item>
+              <szLine>
+                <value>Playlists</value>
+                <value>Discover Weekly</value><value>Release Radar</value>
+                <value>Liked Songs</value><value>On Repeat</value>
+                <value>Repeat Rewind</value><value>Daily Mix 1</value>
+                <value>Daily Mix 2</value>
+                <value>[ 2/ 9]</value>
+              </szLine>
+            </item>
+            """))!;
+
+        Check("a list screen is not playing", !browsing.Playing);
+        Check("its page count is read", browsing.Pages == 9);
+        Check("a long list offers the page keys", browsing.CanPage);
+
+        var shortList = NetAudioClient.Parse(XDocument.Parse("""
+            <item><szLine><value>Playlists</value><value>Liked Songs</value>
+            <value/><value/><value/><value/><value/><value/>
+            <value>[ 1/ 3]</value></szLine></item>
+            """))!;
+        Check("a short list does not", !shortList.CanPage);
+
+        // "Repeat Rewind" is a playlist name, not a mode - only the first line counts.
+        Check("a word further down the screen is not a playing marker", !browsing.Playing);
+
+        // The receiver escapes its lines for HTML before putting them in the XML, so
+        // they arrive escaped twice and XML parsing only undoes the outer layer. The
+        // player was showing literal "&gt;" and "&#39;" in station and track names.
+        var escaped = NetAudioClient.Parse(XDocument.Parse("""
+            <item>
+              <szLine>
+                <value>Rock &amp;amp; Roll</value>
+                <value>Rush &amp;gt; Moving Pictures</value>
+                <value>Sinéad O&amp;#39;Connor</value>
+                <value>P3 &amp;quot;Din Gata&amp;quot;</value>
+              </szLine>
+              <NetPlayingTitle><value>Sveriges Radio P3 &amp;amp; P4</value></NetPlayingTitle>
+            </item>
+            """))!;
+
+        Check("an escaped ampersand reads as one", escaped.Lines[0] == "Rock & Roll");
+        Check("an escaped angle bracket reads as one", escaped.Lines[1] == "Rush > Moving Pictures");
+        Check("a numeric entity reads as its character", escaped.Lines[2] == "Sinéad O'Connor");
+        Check("escaped quotes read as quotes", escaped.Lines[3] == "P3 \"Din Gata\"");
+        Check("the service name is decoded too", escaped.Service == "Sveriges Radio P3 & P4");
+
+        // A bare ampersand is not an entity and must survive untouched.
+        Check("a plain ampersand is left alone", NetAudioClient.Text("R&B Classics") == "R&B Classics");
 
         // An idle player says so with an empty buffer rather than by not answering.
         var idle = NetAudioClient.Parse(XDocument.Parse("""
@@ -566,26 +633,109 @@ public static class SelfTest
             Result(0, "The request was canceled due to the configured HttpClient.Timeout").Dropped);
         Check("so is a failed handshake",
             Result(0, "The SSL connection could not be established").Dropped);
-        Check("so is a 500 it does not mean", Result(500).Dropped);
+        Check("so is a 503", Result(503).Dropped);
 
-        // These are answers. Asking again would only be rude.
+        // These are answers. Asking again would only be rude - and on the X2500H a
+        // missing config type answers 500, consistently, with the next type fine. It
+        // was in here, and retrying every one of those four times over was adding
+        // hundreds of requests to the sweep that made the receiver fall over.
+        Check("a 500 is an answer", !Result(500).Dropped);
         Check("a 403 is an answer", !Result(403).Dropped);
         Check("a 404 is an answer", !Result(404).Dropped);
         Check("and so is a 200", !Result(200).Dropped);
 
-        // The gate hands back the first answer that is not the receiver buckling.
-        var tries = 0;
-        var settled = ReceiverGate.RunAsync("10.0.1.120",
-            () => { tries++; return Task.FromResult(tries); },
-            n => n < 2, CancellationToken.None).GetAwaiter().GetResult();
-        Check("it tries again after a drop", settled == 2 && tries == 2);
+        // The waits are watched rather than waited through: the ladder is fourteen
+        // seconds and a self-test should not take that long.
+        var waited = new List<TimeSpan>();
+        var slept = ReceiverGate.Sleep;
+        ReceiverGate.Sleep = (span, _) => { waited.Add(span); return Task.CompletedTask; };
+        try
+        {
+            // A port with nothing behind it is not a receiver under strain. Without
+            // this, establishing that the legacy API is absent cost fourteen seconds
+            // per request and turned a sweep into a five-minute wait.
+            var silent = 0;
+            ReceiverGate.RunAsync("gate-nothing-there",
+                () => { silent++; return Task.FromResult(0); },
+                _ => true, CancellationToken.None).GetAwaiter().GetResult();
+            Check("a host that never answered is not retried", silent == 1);
+            Check("and nothing is waited for it", waited.Count == 0);
 
-        // ...and gives up rather than hammering it forever.
-        var forever = 0;
-        ReceiverGate.RunAsync("10.0.1.121",
-            () => { forever++; return Task.FromResult(0); },
-            _ => true, CancellationToken.None).GetAwaiter().GetResult();
-        Check("but not forever", forever == 3);
+            // Everything below is about a receiver that has answered and then
+            // falters, which is the case that matters: it answered sixty-four times
+            // and then refused twenty-five in a row.
+            static void Answer(string host) => ReceiverGate.RunAsync(
+                host, () => Task.FromResult(0), _ => false, CancellationToken.None).GetAwaiter().GetResult();
+
+            // The gate hands back the first answer that is not the receiver buckling.
+            Answer("gate-settles");
+            var tries = 0;
+            var settled = ReceiverGate.RunAsync("gate-settles",
+                () => { tries++; return Task.FromResult(tries); },
+                n => n < 2, CancellationToken.None).GetAwaiter().GetResult();
+            Check("it tries again after a drop", settled == 2 && tries == 2);
+
+            // ...and gives up rather than hammering it forever.
+            Answer("gate-gives-up");
+            waited.Clear();
+            var forever = 0;
+            ReceiverGate.RunAsync("gate-gives-up",
+                () => { forever++; return Task.FromResult(0); },
+                _ => true, CancellationToken.None).GetAwaiter().GetResult();
+            Check("but not forever", forever == ReceiverGate.MaxAttempts);
+
+            // Backing off harder each time, because the receiver does not come back
+            // between one request and the next.
+            var recoveries = waited.TakeLast(ReceiverGate.MaxAttempts - 1).ToList();
+            Check("it backs off further every time",
+                recoveries.Count == ReceiverGate.MaxAttempts - 1
+                && recoveries.Zip(recoveries.Skip(1)).All(p => p.Second >= p.First * 2)
+                && recoveries[0] >= TimeSpan.FromSeconds(2));
+
+            // A sweep nobody is watching waits longer between requests than a menu
+            // someone just opened.
+            waited.Clear();
+            Answer("gate-bulk");
+            ReceiverGate.RunAsync("gate-bulk", () => Task.FromResult(0), _ => false,
+                CancellationToken.None, ReceiverPace.Bulk).GetAwaiter().GetResult();
+            var bulk = waited.LastOrDefault();
+
+            waited.Clear();
+            Answer("gate-live");
+            ReceiverGate.RunAsync("gate-live", () => Task.FromResult(0), _ => false,
+                CancellationToken.None).GetAwaiter().GetResult();
+            var live = waited.LastOrDefault();
+
+            Check("bulk work waits longer than interactive", bulk > live && live > TimeSpan.Zero);
+
+            // And once it has faltered, everything on that receiver slows down - not
+            // only the retries of the request that failed. gate-gives-up dropped four
+            // in a row a moment ago, so even an ordinary interactive request to it
+            // should still be on the slow lane.
+            waited.Clear();
+            ReceiverGate.RunAsync("gate-gives-up", () => Task.FromResult(0), _ => false,
+                CancellationToken.None).GetAwaiter().GetResult();
+            Check("a receiver that faltered stays on a slow lane", waited.LastOrDefault() > bulk);
+
+            // One box, two servers. A successful read on the setup port used to mark
+            // the whole receiver as answering, so every refusal on port 80 - which
+            // has no server at all on some firmware - was treated as it falling over.
+            Answer("10.9.9.9:10443");
+            waited.Clear();
+            var onPort80 = 0;
+            ReceiverGate.RunAsync("10.9.9.9:80",
+                () => { onPort80++; return Task.FromResult(0); },
+                _ => true, CancellationToken.None).GetAwaiter().GetResult();
+            Check("a dead port is not retried because another port answered", onPort80 == 1);
+
+            // ...but both ports still queue behind one another, because it is one
+            // small server behind all of it.
+            Check("and the two ports share a queue", waited.Count == 1);
+        }
+        finally
+        {
+            ReceiverGate.Sleep = slept;
+        }
     }
 
     // ---------------------------------------------------------------- checks
@@ -1004,7 +1154,7 @@ public static class SelfTest
 
     private static DenonClient NewClient()
     {
-        var probe = new HttpProbe(NullLogger<HttpProbe>.Instance);
+        var probe = new HttpProbe(NullLogger<HttpProbe>.Instance, new AjaxUiReader(NullLogger<AjaxUiReader>.Instance));
         var ajax = new AjaxConfigClient(probe, NullLogger<AjaxConfigClient>.Instance);
 
         return new DenonClient(

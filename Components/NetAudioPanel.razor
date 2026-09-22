@@ -47,26 +47,57 @@
             </div>
         </div>
 
-        <div class="transport">
-            <button class="step" title="Back" @onclick="() => Send(Player.CursorLeft)">&#9664;</button>
-            <button class="step" title="Up" @onclick="() => Send(Player.CursorUp)">&#9650;</button>
-            <button class="step wide" title="Select" @onclick="() => Send(Player.Enter)">OK</button>
-            <button class="step" title="Down" @onclick="() => Send(Player.CursorDown)">&#9660;</button>
-            <button class="step" title="Forward" @onclick="() => Send(Player.CursorRight)">&#9654;</button>
-        </div>
+        @* Two different sets of controls, because the receiver means two different
+           things by the same commands. Playing, it has no transport of its own: its
+           web UI wires rewind and skip to the cursor keys and play/pause to Enter,
+           and leaves left, right and the page keys doing nothing. Showing five arrows
+           there offered three buttons that cannot work and hid what the other two
+           actually do. *@
+        @if (Player.State.Playing)
+        {
+            <div class="transport">
+                <button class="step" title="Rewind" @onclick="() => Send(Player.Rewind)">&#9198;</button>
+                <button class="step wide" title="Play / pause" @onclick="() => Send(Player.PlayPause)">&#9199;</button>
+                <button class="step" title="Stop" @onclick="() => Send(Player.Stop)">&#9632;</button>
+                <button class="step" title="Next" @onclick="() => Send(Player.Next)">&#9197;</button>
+            </div>
 
-        <div class="transport">
-            <button class="step" title="Page up" @onclick="() => Send(Player.PageUp)">&#8607;</button>
-            <button class="step" title="Stop" @onclick="() => Send(Player.Stop)">&#9632;</button>
-            <button class="step" title="Page down" @onclick="() => Send(Player.PageDown)">&#8609;</button>
-        </div>
+            @* Set, not toggled: this firmware ignores the remote's toggle command and
+               its own UI offers the three states outright. *@
+            <div class="row">
+                <span class="hint">Repeat</span>
+                @foreach (var (mode, text) in Repeats)
+                {
+                    var wanted = mode;
+                    <button class="pill @(Player.State.Repeat == wanted ? "active" : "")"
+                            @onclick="() => Send((h, c) => Player.SetRepeat(h, wanted, c))">@text</button>
+                }
+                <span class="hint">Shuffle</span>
+                <button class="pill @(Player.State.Shuffle ? "active" : "")"
+                        @onclick="() => Send((h, c) => Player.SetShuffle(h, !Player.State.Shuffle, c))">
+                    @(Player.State.Shuffle ? "On" : "Off")
+                </button>
+            </div>
+        }
+        else
+        {
+            <div class="transport">
+                <button class="step" title="Back" @onclick="() => Send(Player.CursorLeft)">&#9664;</button>
+                <button class="step" title="Up" @onclick="() => Send(Player.CursorUp)">&#9650;</button>
+                <button class="step wide" title="Select" @onclick="() => Send(Player.Enter)">OK</button>
+                <button class="step" title="Down" @onclick="() => Send(Player.CursorDown)">&#9660;</button>
+                <button class="step" title="Forward" @onclick="() => Send(Player.CursorRight)">&#9654;</button>
+            </div>
 
-        <div class="row">
-            <button class="pill @(Player.State.Repeat ? "active" : "")"
-                    @onclick="() => Send(Player.ToggleRepeat)">Repeat</button>
-            <button class="pill @(Player.State.Shuffle ? "active" : "")"
-                    @onclick="() => Send(Player.ToggleShuffle)">Shuffle</button>
-        </div>
+            @* The receiver's own UI shows these only past seven pages. *@
+            @if (Player.State.CanPage)
+            {
+                <div class="transport">
+                    <button class="step" title="Page up" @onclick="() => Send(Player.PageUp)">&#8607;</button>
+                    <button class="step" title="Page down" @onclick="() => Send(Player.PageDown)">&#8609;</button>
+                </div>
+            }
+        }
     }
 </section>
 
@@ -86,6 +117,9 @@
         index < Player.State.LineFlags.Count && Player.State.LineFlags[index] != 0;
 
     private string? Art => Player.ArtUrl(Host);
+
+    private static readonly (RepeatMode Mode, string Text)[] Repeats =
+        [(RepeatMode.Off, "Off"), (RepeatMode.One, "One"), (RepeatMode.All, "All")];
 
     protected override void OnInitialized() =>
         _poll = new Timer(_ => _ = PollAsync(), null, Interval, Interval);

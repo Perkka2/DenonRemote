@@ -27,14 +27,34 @@ public sealed partial class AjaxUiReader(ILogger<AjaxUiReader> log)
     { Timeout = TimeSpan.FromSeconds(12) };
 
     /// <summary>
-    /// The sections the UI is split into, in the order it shows them, and the file
-    /// names they use.
+    /// The sections the UI is split into, in the order it shows them, with the prefix
+    /// each one's scripts are served under.
+    ///
+    /// The order is the receiver's own: GlobalsSettings.js lists audio, video,
+    /// inputs, speakers, network, general as the menu down the side, and
+    /// HomeSettings.js adds Zone and Advanced off the home screen.
+    ///
+    /// The last three were missing, and that was doing real damage: the receiver
+    /// answers advanced/1, advanced/2, advanced/9, control/1, 2, 4, 5, 7, 8 and
+    /// home/1 with content, and none of those screens were being read or shown. The
+    /// casing is the receiver's too - "advanced" is lower case where every other
+    /// section is capitalised, and Home has no folder of its own.
     /// </summary>
-    private static readonly (string Path, string Name)[] Sections =
+    private static readonly (string Section, string Prefix)[] Sections =
     [
-        ("audio", "Audio"), ("video", "Video"), ("inputs", "Inputs"),
-        ("speakers", "Speakers"), ("network", "Network"), ("general", "General"),
+        ("audio", "/audio/Audio"), ("video", "/video/Video"), ("inputs", "/inputs/Inputs"),
+        ("speakers", "/speakers/Speakers"), ("network", "/network/Network"),
+        ("general", "/general/General"), ("control", "/control/Control"),
+        ("advanced", "/advanced/advanced"), ("home", "/Home"),
     ];
+
+    /// <summary>
+    /// The same sections, for the offline dump of a captured UI - which keeps them in
+    /// one flat folder, so /audio/Audio is audio_Audio and /Home is Home. Shared so
+    /// there is one list rather than two that drift.
+    /// </summary>
+    internal static IEnumerable<(string Section, string File)> Captured() =>
+        Sections.Select(s => (s.Section, s.Prefix.TrimStart('/').Replace('/', '_')));
 
     private static string Url(string host, string path) => $"https://{host}:10443{path}";
 
@@ -75,19 +95,19 @@ public sealed partial class AjaxUiReader(ILogger<AjaxUiReader> log)
             .Where(g => g.Distinct(StringComparer.Ordinal).Count() == 1)
             .ToDictionary(g => g.Key, g => g.First(), StringComparer.Ordinal);
 
-        foreach (var (path, name) in Sections)
+        foreach (var (section, prefix) in Sections)
         {
             if (ct.IsCancellationRequested) break;
 
-            var iface = await GetAsync(host, $"/{path}/{name}ServerInterface.js", ct);
+            var iface = await GetAsync(host, prefix + "ServerInterface.js", ct);
             if (iface is null) continue;
 
             var types = Types(iface);
-            var settings = await GetAsync(host, $"/{path}/{name}Settings.js", ct);
+            var settings = await GetAsync(host, prefix + "Settings.js", ct);
             var order = settings is null ? [] : Menu(settings);
 
             foreach (var constant in Order(types.Keys, order))
-                groups.Add(new ConfigGroup(path, types[constant], Name(constant, byName)));
+                groups.Add(new ConfigGroup(section, types[constant], Name(constant, byName)));
         }
 
         return groups;
@@ -212,7 +232,7 @@ public sealed partial class AjaxUiReader(ILogger<AjaxUiReader> log)
 
     private Task<string?> GetAsync(string host, string path, CancellationToken ct) =>
         // In its turn, like every other call to the receiver.
-        ReceiverGate.RunAsync(host, async () =>
+        ReceiverGate.RunAsync($"{host}:10443", async () =>
         {
             try
             {

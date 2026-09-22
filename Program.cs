@@ -26,11 +26,10 @@ if (options.ReadUi is { } uiDir)
     var words = AjaxUiReader.Strings(await File.ReadAllTextAsync(Path.Combine(uiDir, "LanguageStrings.js")));
     Console.WriteLine($"  {words.Count} strings\n");
 
-    foreach (var (path, name) in new[] { ("speakers", "Speakers"), ("audio", "Audio"),
-        ("inputs", "Inputs"), ("video", "Video"), ("general", "General"), ("network", "Network") })
+    foreach (var (path, file) in AjaxUiReader.Captured())
     {
-        var iface = Path.Combine(uiDir, $"{path}_{name}ServerInterface.js");
-        var settings = Path.Combine(uiDir, $"{path}_{name}Settings.js");
+        var iface = Path.Combine(uiDir, $"{file}ServerInterface.js");
+        var settings = Path.Combine(uiDir, $"{file}Settings.js");
         if (!File.Exists(iface) || !File.Exists(settings)) continue;
 
         var types = AjaxUiReader.Types(await File.ReadAllTextAsync(iface));
@@ -81,7 +80,7 @@ if (options.Probe is { } sweepTarget)
     var local = Path.Combine(Directory.GetCurrentDirectory(), "discovery");
     var into = Directory.Exists(local) ? local : AppPaths.Ensure(AppPaths.Discovery);
 
-    var sweeper = new HttpProbe(sweepLog.CreateLogger<HttpProbe>());
+    var sweeper = new HttpProbe(sweepLog.CreateLogger<HttpProbe>(), new AjaxUiReader(sweepLog.CreateLogger<AjaxUiReader>()));
     var sweepReport = await sweeper.SweepAsync(sweepTarget, into, CancellationToken.None);
 
     Console.WriteLine();
@@ -98,7 +97,7 @@ if (options.FetchUi is { } target)
     var local = Path.Combine(Directory.GetCurrentDirectory(), "discovery");
     var into = Directory.Exists(local) ? local : AppPaths.Ensure(AppPaths.Discovery);
 
-    var probe = new HttpProbe(probeLog.CreateLogger<HttpProbe>());
+    var probe = new HttpProbe(probeLog.CreateLogger<HttpProbe>(), new AjaxUiReader(probeLog.CreateLogger<AjaxUiReader>()));
     var report = await probe.FetchUiAsync(target, into, CancellationToken.None);
 
     Console.WriteLine();

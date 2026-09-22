@@ -1,3 +1,4 @@
+using System.Net;
 using System.Xml.Linq;
 using DenonRemote.Models;
 
@@ -105,7 +106,7 @@ public sealed class NetAudioClient(ILogger<NetAudioClient> log)
     private static string Signature(NetAudioState state) => string.Join(
         '\u001f',
         [.. state.Lines, state.Service ?? "", state.Input ?? "",
-         state.HasArt ? "art" : "", state.Repeat ? "rep" : "", state.Shuffle ? "shf" : ""]);
+         state.HasArt ? "art" : "", state.Repeat.ToString(), state.Shuffle ? "shf" : ""]);
 
     /// <summary>Reads the status document. Static and public to the tests.</summary>
     internal static NetAudioState? Parse(XDocument document)
@@ -113,14 +114,14 @@ public sealed class NetAudioClient(ILogger<NetAudioClient> log)
         var root = document.Root;
         if (root is null) return null;
 
-        string Value(string tag) => root
+        string Value(string tag) => Text(root
             .Elements().FirstOrDefault(e => e.Name.LocalName == tag)
-            ?.Elements().FirstOrDefault(e => e.Name.LocalName == "value")?.Value.Trim() ?? "";
+            ?.Elements().FirstOrDefault(e => e.Name.LocalName == "value")?.Value);
 
         List<string> Values(string tag) => root
             .Elements().FirstOrDefault(e => e.Name.LocalName == tag)
             ?.Elements().Where(e => e.Name.LocalName == "value")
-            .Select(e => e.Value.Trim()).ToList() ?? [];
+            .Select(e => Text(e.Value)).ToList() ?? [];
 
         var state = new NetAudioState
         {
@@ -128,7 +129,12 @@ public sealed class NetAudioClient(ILogger<NetAudioClient> log)
             Input = Empty(Value("InputFuncSelect")),
             // 0 means no art; anything else is a handle to it.
             HasArt = Value("Art") is { Length: > 0 } art && art != "0",
-            Repeat = Value("NetAudioRepeat").Equals("ON", StringComparison.OrdinalIgnoreCase),
+            Repeat = Value("NetAudioRepeat").ToUpperInvariant() switch
+            {
+                "ONE" => RepeatMode.One,
+                "ALL" => RepeatMode.All,
+                _ => RepeatMode.Off,
+            },
             Shuffle = Value("NetAudioRandom").Equals("ON", StringComparison.OrdinalIgnoreCase),
         };
 
@@ -147,8 +153,22 @@ public sealed class NetAudioClient(ILogger<NetAudioClient> log)
 
     private static string? Empty(string value) => value.Length > 0 ? value : null;
 
+    /// <summary>
+    /// One line of the receiver's screen, as text.
+    ///
+    /// The receiver escapes the line for HTML before putting it in the XML document,
+    /// so it arrives escaped twice: a track called "Rush &gt; Moving Pictures" is
+    /// "&amp;gt;" on the wire, and parsing the XML only undoes the outer layer. Its
+    /// own web UI drops these straight into the page, where the browser undoes the
+    /// second. Nothing here does, so the player was showing "&amp;gt;", "&amp;amp;"
+    /// and "&amp;#39;" in track and station names.
+    /// </summary>
+    internal static string Text(string? value) =>
+        value is null ? "" : WebUtility.HtmlDecode(value).Trim();
+
     // ------------------------------------------------------------- commands
 
+    // Browsing a list.
     public Task CursorUp(string host, CancellationToken ct) => SendAsync(host, "CurUp", ct);
     public Task CursorDown(string host, CancellationToken ct) => SendAsync(host, "CurDown", ct);
     public Task CursorLeft(string host, CancellationToken ct) => SendAsync(host, "CurLeft", ct);
@@ -156,9 +176,29 @@ public sealed class NetAudioClient(ILogger<NetAudioClient> log)
     public Task Enter(string host, CancellationToken ct) => SendAsync(host, "CurEnter", ct);
     public Task PageUp(string host, CancellationToken ct) => SendAsync(host, "CmdPageUp", ct);
     public Task PageDown(string host, CancellationToken ct) => SendAsync(host, "CmdPageDown", ct);
+
+    // Playing. The receiver has no transport commands of its own: its web UI wires
+    // the rewind and skip buttons to the cursor keys and play/pause to Enter, which
+    // is why the arrows appeared to do the wrong thing - they were doing exactly
+    // what the receiver does with them.
+    public Task Rewind(string host, CancellationToken ct) => SendAsync(host, "CurUp", ct);
+    public Task Next(string host, CancellationToken ct) => SendAsync(host, "CurDown", ct);
+    public Task PlayPause(string host, CancellationToken ct) => SendAsync(host, "CurEnter", ct);
     public Task Stop(string host, CancellationToken ct) => SendAsync(host, "CmdStop", ct);
-    public Task ToggleRepeat(string host, CancellationToken ct) => SendAsync(host, "CmdRepeatOnOff", ct);
-    public Task ToggleShuffle(string host, CancellationToken ct) => SendAsync(host, "CmdRandomOnOff", ct);
+
+    /// <summary>
+    /// Repeat is set, not toggled. CmdRepeatOnOff is what the remote sends and this
+    /// firmware ignores it; its own UI offers the three states outright.
+    /// </summary>
+    public Task SetRepeat(string host, RepeatMode mode, CancellationToken ct) => SendAsync(host, mode switch
+    {
+        RepeatMode.One => "UsbRepOn",
+        RepeatMode.All => "UsbRepAll",
+        _ => "UsbRepOff",
+    }, ct);
+
+    public Task SetShuffle(string host, bool on, CancellationToken ct) =>
+        SendAsync(host, on ? "UsbRanOn" : "UsbRanOff", ct);
 
     /// <summary>
     /// The UI sends the command and, in the same post, asks the receiver to refresh
