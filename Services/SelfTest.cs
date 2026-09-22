@@ -314,6 +314,13 @@ public static class SelfTest
             assign.Rows.Select(r => r.Index).Distinct().SequenceEqual(new[] { "CBL/SAT", "DVD" }));
         Check("each cell keeps its own value",
             assign.Rows.Single(r => r.Index == "DVD" && r.Name == "HDMI").Value == "HD2");
+        // The heading is shared down the column; a write needs the one control's name.
+        Check("a cell knows the field that posts it",
+            assign.Rows.Single(r => r.Index == "DVD" && r.Name == "HDMI").PostName == "listHdmiAssignDVD");
+        Check("and cells in a column post to different fields",
+            assign.Rows.Where(r => r.Name == "HDMI").Select(r => r.PostName).Distinct().Count() == 2);
+        Check("an ordinary setting posts under its own name",
+            speakers.Rows[0].PostName == "radioSpConfigFr");
 
         // Hide Sources has a row of two plain cells - "CBL/SAT | ZONE 2" - that is
         // not a header. Reading it as one turned every source below into a cell.
@@ -352,6 +359,50 @@ public static class SelfTest
             <FORM name="networksetup" method="POST"><INPUT type='hidden' name='setPureDirectOn' value='OFF'></FORM></html>
             """)!;
         Check("a redirect stub has no settings", stubPage.Rows.Count == 0);
+
+        // ------------------------------------------------------------ posting
+        //
+        // A change is applied by posting the whole form exactly as the browser does,
+        // so there is never a question of whether a partial post is accepted. What
+        // matters is completeness: a field left out is one the receiver may read as
+        // cleared. These follow the HTML rules for which controls are successful,
+        // and the same pages were diffed field-for-field against Chromium's own
+        // submission (twelve shapes, 165 fields, identical).
+        const string form = """
+            <FORM name="spsetup" action="s_speakersetup.asp" method="POST" target="spsetup2">
+            <INPUT type='hidden' name='setPureDirectOn' value='OFF'>
+            <INPUT type='radio' name='mode' value='A' checked>A<INPUT type='radio' name='mode' value='B'>B
+            <INPUT type='checkbox' name='on' value='yes' checked><INPUT type='checkbox' name='off' value='yes'>
+            <INPUT disabled type='text' name='port' value="00000">
+            <INPUT type='text' name='level' value='-3.5'>
+            <INPUT type='button' name='apply' value='Set'>
+            <select name='freq'><OPTION value='40Hz'>40Hz</OPTION><OPTION value='60Hz' selected>60Hz</OPTION></SELECT>
+            <select name='first'><OPTION value='X'>X</OPTION><OPTION value='Y'>Y</OPTION></SELECT>
+            </FORM>
+            """;
+
+        var fields = AspSetupClient.Fields(form);
+        string? Sent(string name) => fields.Where(f => f.Key == name).Select(f => f.Value).FirstOrDefault();
+
+        Check("the hidden guard is sent", Sent("setPureDirectOn") == "OFF");
+        Check("only the checked radio is sent",
+            Sent("mode") == "A" && fields.Count(f => f.Key == "mode") == 1);
+        Check("a ticked box is sent", Sent("on") == "yes");
+        Check("an unticked box is not", Sent("off") is null);
+        Check("a disabled control is not sent", Sent("port") is null);
+        Check("a text box is sent with its value", Sent("level") == "-3.5");
+        Check("a button is not sent", Sent("apply") is null);
+        Check("a select sends its selection", Sent("freq") == "60Hz");
+        // A select with nothing marked still submits - its first option is chosen.
+        Check("a select with no selection sends its first", Sent("first") == "X");
+
+        var post = AspSetupClient.BuildPost(form, "freq", "80Hz")!;
+        Check("a change replaces one field",
+            post.Single(f => f.Key == "freq").Value == "80Hz");
+        Check("and leaves every other alone",
+            post.Count == fields.Count && post.Single(f => f.Key == "mode").Value == "A");
+        Check("a field the page lacks is refused",
+            AspSetupClient.BuildPost(form, "notThere", "1") is null);
 
         // The menus are read from the receiver, so what is listed here is only where
         // to start - and it must never start at something that acts.

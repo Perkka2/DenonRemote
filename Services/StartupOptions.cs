@@ -28,6 +28,9 @@ public sealed class StartupOptions
     /// <summary>Parse captured setup pages and print what was read. Development aid.</summary>
     public string? ReadPages { get; private init; }
 
+    /// <summary>Print the form fields a page would post. Development aid.</summary>
+    public string? ShowPost { get; private init; }
+
     /// <summary>
     /// Anything on the command line that wasn't understood. A mistyped flag used to
     /// fall through the switch and silently start the web app instead - which looks
@@ -47,6 +50,7 @@ public sealed class StartupOptions
         string? fetchUi = null;
         string? probe = null;
         string? readPages = null;
+        string? showPost = null;
         var unknown = new List<string>();
 
         for (var i = 0; i < args.Length; i++)
@@ -82,6 +86,11 @@ public sealed class StartupOptions
                     i++;
                     break;
 
+                case "--show-post" when i + 1 < args.Length:
+                    showPost = args[i + 1];
+                    i++;
+                    break;
+
                 case "--urls":
                     urlsOverridden = true;
                     break;
@@ -106,6 +115,7 @@ public sealed class StartupOptions
             FetchUi = fetchUi,
             Probe = probe,
             ReadPages = readPages,
+            ShowPost = showPost,
             Unknown = unknown,
         };
     }
@@ -120,6 +130,7 @@ public sealed class StartupOptions
     --fetch-ui <host>  capture that receiver's own setup UI and exit
     --probe <host>     sweep that receiver's HTTP APIs and exit
     --read-pages <dir> parse captured setup pages in <dir> and print them
+    --show-post <file> print the form fields that page would post
 
 """;
 
