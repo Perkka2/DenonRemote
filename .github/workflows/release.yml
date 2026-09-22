@@ -46,13 +46,28 @@ jobs:
             -p:PublishReadyToRun=${{ startsWith(matrix.rid, 'win-arm64') && 'false' || 'true' }}
           rm -f out/DenonRemote-${{ matrix.rid }}/*.pdb
 
+      # Packaging is split by OS on purpose. The Windows runners have no `zip` in
+      # Git Bash, and PowerShell's Compress-Archive drops the executable bit - which
+      # the macOS and Linux builds need, or the app they unzip will not start. So
+      # each side uses the tool that is both present and lossless for it.
       - name: Package
+        if: runner.os != 'Windows'
         shell: bash
         run: |
-          version="${GITHUB_REF_NAME#v}"
-          [ "$version" = "$GITHUB_REF_NAME" ] && version=dev
+          version=dev
+          [ "$GITHUB_REF_TYPE" = tag ] && version="${GITHUB_REF_NAME#v}"
           mkdir -p dist
           ( cd out && zip -qr "../dist/DenonRemote-$version-${{ matrix.rid }}.zip" . )
+
+      - name: Package (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $version = if ($env:GITHUB_REF_TYPE -eq 'tag') {
+              $env:GITHUB_REF_NAME -replace '^v', ''
+          } else { 'dev' }
+          New-Item -ItemType Directory -Force -Path dist | Out-Null
+          Compress-Archive -Path out/* -DestinationPath "dist/DenonRemote-$version-${{ matrix.rid }}.zip"
 
       - uses: actions/upload-artifact@v4
         with:
