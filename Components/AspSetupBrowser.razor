@@ -14,11 +14,16 @@
         now — change these from the receiver's menus or its own web page.
     </p>
 
-    @foreach (var menu in AspCatalog.Sections)
+    @if (groups.Count == 0)
+    {
+        <p class="muted-text">@(reading ? "Reading the receiver's menus…" : "This receiver didn't list any settings.")</p>
+    }
+
+    @foreach (var menu in groups.Select(g => g.Section).Distinct())
     {
         <h3 class="section-name">@menu</h3>
         <div class="grid">
-            @foreach (var group in AspCatalog.Groups.Where(g => g.Section == menu))
+            @foreach (var group in groups.Where(g => g.Section == menu))
             {
                 var current = group;
                 <button class="tile @(open == current ? "active" : "")" @onclick="() => ToggleAsync(current)">
@@ -102,9 +107,31 @@
     [Parameter, EditorRequired] public AspSetupClient Setup { get; set; } = default!;
     [Parameter, EditorRequired] public string Host { get; set; } = "";
 
+    private IReadOnlyList<AspGroup> groups = [];
     private AspGroup? open;
     private AspPage? screen;
     private bool loading;
+    private bool reading = true;
+
+    /// <summary>
+    /// The menus come from the receiver, so they are read once when the tab opens
+    /// rather than listed in the app - see AspCatalog for why that matters.
+    /// </summary>
+    protected override async Task OnInitializedAsync()
+    {
+        try
+        {
+            groups = await Setup.ReadMenusAsync(Host, CancellationToken.None);
+        }
+        catch (Exception ex)
+        {
+            Log.LogDebug("Reading the setup menus failed: {Message}", ex.Message);
+        }
+        finally
+        {
+            reading = false;
+        }
+    }
 
     private IReadOnlyList<string> Indexes => screen is null ? []
         : screen.Rows.Where(r => r.Index is not null).Select(r => r.Index!).Distinct().ToList();
@@ -142,7 +169,10 @@
         loading = true;
         try
         {
-            screen = await Setup.ReadAsync(Host, group.Path, CancellationToken.None);
+            // The menu links to a frameset; the controls are in a frame inside it.
+            var content = await Setup.ContentFrameAsync(Host, group.Path, CancellationToken.None);
+            if (content is not null)
+                screen = await Setup.ReadAsync(Host, content, CancellationToken.None);
         }
         catch (Exception ex)
         {

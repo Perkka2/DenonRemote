@@ -309,8 +309,17 @@ public sealed class HttpProbe(ILogger<HttpProbe> log)
         // their behaviour is invisible to a tag-only scan. Any quoted .js path inside
         // a script block is followed instead.
         foreach (var block in Matches(html, "<script[^>]*>(.*?)</script>"))
-        foreach (var match in Matches(block, "[\"']([^\"']+\\.js(?:\\?[^\"']*)?)[\"']"))
-            yield return match;
+        {
+            foreach (var match in Matches(block, "[\"']([^\"']+\\.js(?:\\?[^\"']*)?)[\"']"))
+                yield return match;
+
+            // Some frames are stubs: an empty form and a window.onload that sends the
+            // browser on to the page that actually has the settings. Network's
+            // Connection and Settings are both like this, and following only links
+            // and frames left their real pages uncaptured entirely.
+            foreach (var match in Matches(block, "location\\.href\\s*=\\s*[\"']([^\"']+)[\"']"))
+                yield return match;
+        }
     }
 
     internal static bool SameOrigin(Uri origin, Uri candidate) =>

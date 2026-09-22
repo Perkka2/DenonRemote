@@ -102,6 +102,16 @@ public static class SelfTest
         // The host passes its own arguments through; only flags are ours to reject.
         Check("a bare argument is left alone", StartupOptions.Parse(["something"]).Unknown.Count == 0);
 
+        // A stub frame that only redirects: its target is the page with the settings,
+        // and following links and frames alone never reaches it.
+        var stub = """
+            <html><script language="javaScript1.2"><!--
+              window.onload = function() { location.href = "d_network_setting_dhcp.asp"; }
+            // --></script><body><FORM name="networksetup"></FORM></body></html>
+            """;
+        Check("a redirect target is followed",
+            HttpProbe.ReferencesOf(stub).Contains("d_network_setting_dhcp.asp"));
+
         Check("an asp page is walked", HttpProbe.IsDocument(new Uri("http://h/SETUP/f_home.asp")));
         Check("an html page is walked", HttpProbe.IsDocument(new Uri("http://h/audio/audio.html")));
         Check("a script is not walked", !HttpProbe.IsDocument(new Uri("http://h/jquery.js")));
@@ -336,13 +346,31 @@ public static class SelfTest
         Check("a slider is read", levels.Rows.Count == 1 && levels.Rows[0].Value == "-1.5");
         Check("it takes its companion's name", levels.Rows[0].Name == "textCVFL");
 
-        // Every page in the catalog points at a content frame, not its frameset.
-        Check("the catalog points at content frames",
-            AspCatalog.Groups.All(g => g.Path.Contains("/d_") && g.Path.EndsWith(".asp")));
-        Check("and never at a submit page",
-            AspCatalog.Groups.All(g => !g.Path.Contains("/s_")));
-        Check("the catalog has no duplicates",
-            AspCatalog.Groups.Select(g => g.Path).Distinct().Count() == AspCatalog.Groups.Count);
+        // A stub page reads as empty; the reader has to go on to the real one.
+        var stubPage = AspSetupClient.Parse("""
+            <html><script>window.onload = function(){ location.href = "d_network_setting_dhcp.asp"; }</script>
+            <FORM name="networksetup" method="POST"><INPUT type='hidden' name='setPureDirectOn' value='OFF'></FORM></html>
+            """)!;
+        Check("a redirect stub has no settings", stubPage.Rows.Count == 0);
+
+        // The menus are read from the receiver, so what is listed here is only where
+        // to start - and it must never start at something that acts.
+        Check("the roots are framesets", AspCatalog.Roots.All(r => r.Path.Contains("/f_")));
+        Check("no root is a submit page", AspCatalog.Roots.All(r => !r.Path.Contains("/s_")));
+
+        // Relative links resolve against the page they were found on. Getting this
+        // wrong sends every menu one directory adrift.
+        Check("a sibling resolves",
+            AspSetupClient.Resolve("/SETUP/NETWORK/MENU/d_right_network.asp", "../CONNECTION/f_network_setting_dhcp.asp")
+                == "/SETUP/NETWORK/CONNECTION/f_network_setting_dhcp.asp");
+        Check("a frame beside its frameset resolves",
+            AspSetupClient.Resolve("/SETUP/SPEAKERS/SPEAKERCONFIG/f_speakersetup.asp", "d_speakersetup.asp")
+                == "/SETUP/SPEAKERS/SPEAKERCONFIG/d_speakersetup.asp");
+        Check("a section resolves from the home menu",
+            AspSetupClient.Resolve("/SETUP/Home/d_left_home.asp", "../AUDIO/f_audio.asp")
+                == "/SETUP/AUDIO/f_audio.asp");
+        Check("an absolute link is left alone",
+            AspSetupClient.Resolve("/SETUP/Home/d_left_home.asp", "/lib/jquery.js") == "/lib/jquery.js");
     }
 
     // ---------------------------------------------------------------- checks
