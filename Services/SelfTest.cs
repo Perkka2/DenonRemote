@@ -404,6 +404,52 @@ public static class SelfTest
         Check("a field the page lacks is refused",
             AspSetupClient.BuildPost(form, "notThere", "1") is null);
 
+        // ------------------------------------------------ values behind a Set
+        //
+        // A text box on these pages is paired with a hidden flag that its Set button
+        // turns on before submitting. Post the number without the flag and the
+        // receiver takes the post and ignores the number.
+        const string delay = """
+            <FORM name="surrParaForm" action="s_audio.asp" method="POST">
+            <INPUT type='hidden' name='setPureDirectOn' value='OFF'>
+            <INPUT type='hidden' name='setSetupLock' value='OFF'>
+            <TABLE><TR><TD><b>Audio Delay</b></TD><TD>
+              <INPUT type='text' name='textAudioDelay' size='4' value='0'>ms
+              <INPUT type='button' name='setbtnAudioDelay' value='Set' onClick='buttonClickSetAudioDelay()'>
+              <INPUT type='hidden' name='setAudioDelay' value='off'>
+            </TD></TR></TABLE></FORM>
+            """;
+
+        var delayPage = AspSetupClient.Parse(delay)!;
+        var box = delayPage.Rows.Single(r => r.Label == "Audio Delay");
+        Check("a Set value is read", box.Value == "0" && box.PostName == "textAudioDelay");
+        Check("its flag is found by name", box.Arm == "setAudioDelay");
+        Check("and it is not a dropdown", !box.HasOptions);
+
+        var armed = AspSetupClient.BuildPost(delay,
+            [new("textAudioDelay", "120"), new("setAudioDelay", "on")])!;
+        Check("the number is posted", armed.Single(f => f.Key == "textAudioDelay").Value == "120");
+        Check("with its flag armed", armed.Single(f => f.Key == "setAudioDelay").Value == "on");
+        Check("the guards ride along", armed.Any(f => f.Key == "setPureDirectOn"));
+        Check("and the button never does", armed.All(f => f.Key != "setbtnAudioDelay"));
+
+        // Channel levels put four boxes behind one flag, so the name rule cannot apply.
+        const string sliders = """
+            <FORM action="s_speakersetup.asp">
+            <INPUT type='hidden' name='setPureDirectOn' value='OFF'>
+            <INPUT type='hidden' name='setSetupLock' value='OFF'>
+            <TABLE><TR><TD><B>Front L</B></TD><TD>
+              <input id='RangeCVFL' type='range' value='-1.5'/><INPUT type='hidden' name='textCVFL' value='-1.5'>
+            </TD></TR></TABLE>
+            <INPUT type='button' name='setbtnCLA' value='Set'><INPUT type='hidden' name='setCLA' value='off'>
+            </FORM>
+            """;
+        Check("a page with one flag of its own uses it",
+            AspSetupClient.ArmFor(sliders, "textCVFL") == "setCLA");
+        // The two guards are not arming flags, and a page with none offers no edit.
+        Check("the guards are never mistaken for it",
+            AspSetupClient.ArmFor("<INPUT type='hidden' name='setPureDirectOn' value='OFF'>", "textX") is null);
+
         // The menus are read from the receiver, so what is listed here is only where
         // to start - and it must never start at something that acts.
         Check("the roots are framesets", AspCatalog.Roots.All(r => r.Path.Contains("/f_")));
