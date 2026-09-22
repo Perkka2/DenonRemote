@@ -31,6 +31,9 @@ public sealed class DeviceProfile
     /// </summary>
     public bool NetAudio { get; set; }
 
+    /// <summary>True when the pre-HEOS ASP setup tree answered.</summary>
+    public bool AspSetup { get; set; }
+
     public string ZoneName(int zone) =>
         ZoneNames.TryGetValue(zone, out var name) && name.Length > 0
             ? name

@@ -1,0 +1,156 @@
+@* The pre-HEOS receiver's own setup tree, read live.
+
+   Its pages arrive rendered, with the current state and every allowed value in
+   them, and in words rather than codes - so unlike the newer generation nothing
+   has to be translated. Reading only: the page's form is where the receiver
+   applies a change, and what it does with a partial post is not established. *@
+
+@inject ILogger<AspSetupBrowser> Log
+
+<section class="panel tight">
+    <h2>Receiver setup</h2>
+    <p class="muted-text">
+        Read from the receiver's own setup pages, in its own words. Read-only for
+        now — change these from the receiver's menus or its own web page.
+    </p>
+
+    @foreach (var menu in AspCatalog.Sections)
+    {
+        <h3 class="section-name">@menu</h3>
+        <div class="grid">
+            @foreach (var group in AspCatalog.Groups.Where(g => g.Section == menu))
+            {
+                var current = group;
+                <button class="tile @(open == current ? "active" : "")" @onclick="() => ToggleAsync(current)">
+                    @current.Label
+                </button>
+            }
+        </div>
+    }
+</section>
+
+@if (open is not null)
+{
+    <section class="panel">
+        <div class="quick-head">
+            <h2>@(screen?.Title is { Length: > 0 } title ? title : open.Label)</h2>
+            <span class="now">@open.Section</span>
+        </div>
+
+        @if (loading)
+        {
+            <p class="muted-text">Reading…</p>
+        }
+        else if (screen is null)
+        {
+            <p class="muted-text">This receiver didn't serve that page.</p>
+        }
+        else
+        {
+            @if (screen.Help.Length > 0)
+            {
+                <p class="muted-text">@screen.Help</p>
+            }
+            @if (screen.LockedBy is { } why)
+            {
+                <p class="muted-text">Nothing here can change while @why.</p>
+            }
+
+            @if (screen.Rows.Count == 0)
+            {
+                <p class="muted-text">Nothing on this page to show.</p>
+            }
+            else if (Columns.Count > 1)
+            {
+                <div class="matrix">
+                    <div class="matrix-row head">
+                        <span class="matrix-name"></span>
+                        @foreach (var column in Columns)
+                        {
+                            <span class="matrix-cell">@column</span>
+                        }
+                    </div>
+                    @foreach (var index in Indexes)
+                    {
+                        <div class="matrix-row">
+                            <span class="matrix-name">@index</span>
+                            @foreach (var column in Columns)
+                            {
+                                <span class="matrix-cell">
+                                    <span class="fact-value">@Display(Cell(index, column))</span>
+                                </span>
+                            }
+                        </div>
+                    }
+                </div>
+            }
+            else
+            {
+                @foreach (var row in screen.Rows)
+                {
+                    <div class="setting wide">
+                        <span>@row.Label</span>
+                        <span class="fact-value">@Display(row)</span>
+                    </div>
+                }
+            }
+        }
+    </section>
+}
+
+@code {
+    [Parameter, EditorRequired] public AspSetupClient Setup { get; set; } = default!;
+    [Parameter, EditorRequired] public string Host { get; set; } = "";
+
+    private AspGroup? open;
+    private AspPage? screen;
+    private bool loading;
+
+    private IReadOnlyList<string> Indexes => screen is null ? []
+        : screen.Rows.Where(r => r.Index is not null).Select(r => r.Index!).Distinct().ToList();
+
+    private IReadOnlyList<string> Columns
+    {
+        get
+        {
+            if (screen is null) return [];
+            var indexed = screen.Rows.Where(r => r.Index is not null).ToList();
+            var names = indexed.Select(r => r.Name).Distinct().ToList();
+            return names.Count > 1 && Indexes.Count > 1 ? names : [];
+        }
+    }
+
+    private ConfigRow? Cell(string index, string name) =>
+        screen?.Rows.FirstOrDefault(r => r.Index == index && r.Name == name);
+
+    /// <summary>
+    /// The receiver answers in its own short codes - HD1, LAT - but publishes the
+    /// word for each beside it, so the word is always available here.
+    /// </summary>
+    private static string Display(ConfigRow? row)
+    {
+        if (row is null || row.Value.Length == 0) return "—";
+        return row.Options.FirstOrDefault(o => o.Code == row.Value)?.Text ?? row.Value;
+    }
+
+    private async Task ToggleAsync(AspGroup group)
+    {
+        if (open == group) { open = null; screen = null; return; }
+
+        open = group;
+        screen = null;
+        loading = true;
+        try
+        {
+            screen = await Setup.ReadAsync(Host, group.Path, CancellationToken.None);
+        }
+        catch (Exception ex)
+        {
+            Log.LogDebug("Setup page {Path} failed: {Message}", group.Path, ex.Message);
+        }
+        finally
+        {
+            loading = false;
+        }
+    }
+}

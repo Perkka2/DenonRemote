@@ -30,6 +30,7 @@ public static class SelfTest
         SetupUiCrawl();
         LegacySourceTable();
         NetworkPlayer();
+        AspSetupPages();
 
         Console.WriteLine();
         Console.WriteLine($"  {_passed} passed, {Failures.Count} failed");
@@ -220,6 +221,128 @@ public static class SelfTest
                 == "http://10.0.1.197/goform/formNetAudio_StatusXml.xml");
         Check("commands go where the UI posts them",
             NetAudioClient.CommandUrl("10.0.1.197") == "http://10.0.1.197/NetAudio/index.put.asp");
+    }
+
+    /// <summary>
+    /// The pre-HEOS setup pages. These fragments are the real markup, verbatim -
+    /// including the parts that caused each bug noted below.
+    /// </summary>
+    private static void AspSetupPages()
+    {
+        // Radios, with the checked one carrying the current value.
+        var speakers = AspSetupClient.Parse("""
+            <FORM name="spsetup" action="s_speakersetup.asp" method="POST">
+            <INPUT type='hidden' name='setPureDirectOn' value='OFF'>
+            <INPUT type='hidden' name='setSetupLock' value='OFF'>
+            <div class="Title">Speakers/Speaker Config.</div>
+            <div class="HelpText">Selects the use and size of each speaker</div>
+            <TABLE>
+            <TR><TD nowrap><B>&nbsp;&nbsp;Front</B></TD><TD>
+              <INPUT type='radio' name='radioSpConfigFr' value='Large' onClick='radioBtn()'>Large<INPUT type='radio' name='radioSpConfigFr' value='Small' onClick='radioBtn()' checked>Small
+            </TD></TR>
+            <TR><TD nowrap><B>&nbsp;&nbsp;Subwoofer</B></TD><TD>
+              <INPUT type='radio' name='radioSpConfigSw' value='1spkr' onClick='radioBtn()'>1 spkr<INPUT type='radio' name='radioSpConfigSw' value='2spkrs' onClick='radioBtn()' checked>2 spkrs<INPUT type='radio' name='radioSpConfigSw' value='None' onClick='radioBtn()'>None
+            </TD></TR>
+            </TABLE></FORM>
+            """)!;
+
+        Check("the page names itself", speakers.Title == "Speakers/Speaker Config.");
+        Check("the page explains itself", speakers.Help.StartsWith("Selects the use"));
+        Check("a radio group is one setting", speakers.Rows.Count == 2);
+        Check("the checked radio is the value",
+            speakers.Rows[0].Value == "Small" && speakers.Rows[0].Label == "Front");
+        Check("its siblings are the choices",
+            speakers.Rows[1].Options.Select(o => o.Text).SequenceEqual(new[] { "1 spkr", "2 spkrs", "None" }));
+        Check("an unlocked page is unlocked", !speakers.Locked);
+
+        // Pure Direct and Setup Lock are the receiver's own refusals.
+        var locked = AspSetupClient.Parse("""
+            <FORM action="s_speakersetup.asp"><INPUT type='hidden' name='setPureDirectOn' value='ON'>
+            <TABLE><TR><TD><B>Front</B></TD><TD><INPUT type='radio' name='r' value='A' checked>A</TD></TR></TABLE></FORM>
+            """)!;
+        Check("Pure Direct locks the page", locked.LockedBy == "Pure Direct is on");
+        Check("and every setting on it", locked.Rows.All(r => r.Locked));
+
+        // A leading dash is indentation on a label - and a minus sign on a value.
+        var volume = AspSetupClient.Parse("""
+            <FORM action="s_audio.asp"><TABLE>
+            <TR><TD><B> -Limit</B></TD><TD>
+              <select name='listLimit'><OPTION value='OFF' selected>Off</OPTION><OPTION value='M20'>-20dB</OPTION></SELECT>
+            </TD></TR></TABLE></FORM>
+            """)!;
+        Check("an indented label loses its dash", volume.Rows[0].Label == "Limit");
+        Check("a negative value keeps its minus",
+            volume.Rows[0].Options.Any(o => o.Text == "-20dB"));
+
+        // A radio group beside its text box is one setting in two parts, not a table.
+        var pair = AspSetupClient.Parse("""
+            <FORM action="s_audio.asp"><TABLE>
+            <TR><TD><B>Power On Level</B></TD><TD>
+              <INPUT type='radio' name='radioPw' value='LAST' checked>Last<INPUT type='radio' name='radioPw' value='LVL'>Level
+              <INPUT type='text' name='textPw' value='45'>
+            </TD></TR></TABLE></FORM>
+            """)!;
+        Check("a setting and its box are not a table", pair.Rows.All(r => r.Index is null));
+        Check("the setting is named once", pair.Rows.Count(r => r.Label == "Power On Level") == 1);
+
+        // Input assign is a table, and says so with an empty corner cell.
+        var assign = AspSetupClient.Parse("""
+            <FORM action="s_InputAssign.asp"><TABLE>
+            <tr><td></td><td><B>HDMI</B></td><td><B>DIGITAL</B></td></tr>
+            <tr><TD><B>CBL/SAT</B></td>
+              <TD><select name='listHdmiAssignSAT/CBL'><OPTION value='HD1' selected>1</OPTION><OPTION value='HD2'>2</OPTION></SELECT></td>
+              <TD><select name='listDigitalAssignSAT/CBL'><OPTION value='CO1' selected>COAX1</OPTION><OPTION value='OFF'>-</OPTION></SELECT></td>
+            </tr>
+            <tr><TD><B>DVD</B></td>
+              <TD><select name='listHdmiAssignDVD'><OPTION value='HD1'>1</OPTION><OPTION value='HD2' selected>2</OPTION></SELECT></td>
+              <TD><select name='listDigitalAssignDVD'><OPTION value='CO1'>COAX1</OPTION><OPTION value='OFF' selected>-</OPTION></SELECT></td>
+            </tr></TABLE></FORM>
+            """)!;
+        Check("the header names the columns",
+            assign.Rows.Select(r => r.Name).Distinct().SequenceEqual(new[] { "HDMI", "DIGITAL" }));
+        Check("the rows are the sources",
+            assign.Rows.Select(r => r.Index).Distinct().SequenceEqual(new[] { "CBL/SAT", "DVD" }));
+        Check("each cell keeps its own value",
+            assign.Rows.Single(r => r.Index == "DVD" && r.Name == "HDMI").Value == "HD2");
+
+        // Hide Sources has a row of two plain cells - "CBL/SAT | ZONE 2" - that is
+        // not a header. Reading it as one turned every source below into a cell.
+        var hide = AspSetupClient.Parse("""
+            <FORM action="s_Delete.asp"><TABLE>
+            <TR><TD><b>&nbsp;&nbsp;CBL/SAT     </b></TD><TD height='30'> ZONE 2</TD></TR>
+            <TR><TD><b>&nbsp;&nbsp;DVD         </b></TD><TD><INPUT type='radio' name='DVD' value='USE' checked>Show<INPUT type='radio' name='DVD' value='DEL'>Hide</TD></TR>
+            <TR><TD><b>&nbsp;&nbsp;Blu-ray     </b></TD><TD><INPUT type='radio' name='BD' value='USE' checked>Show<INPUT type='radio' name='BD' value='DEL'>Hide</TD></TR>
+            </TABLE></FORM>
+            """)!;
+        Check("two plain cells are not a header", hide.Rows.All(r => r.Index is null));
+        Check("the sources stay a list",
+            hide.Rows.Select(r => r.Label).SequenceEqual(new[] { "DVD", "Blu-ray" }));
+
+        // Source Level opens its table with a cell and no row at all.
+        var rowless = AspSetupClient.Parse("""
+            <FORM action="s_inputsetup.asp"><TABLE><TD height='30'><B>Source Level</B></TD>
+            <TD height='30'><INPUT type='text' name='textSourceLevelDigital' value='0'>dB</TD></TABLE></FORM>
+            """)!;
+        Check("a table with no row still reads", rowless.Rows.Count == 1);
+        Check("and reads correctly",
+            rowless.Rows[0].Label == "Source Level" && rowless.Rows[0].Value == "0");
+
+        // Channel levels are sliders driving a hidden field, which is the real name.
+        var levels = AspSetupClient.Parse("""
+            <FORM action="s_speakersetup.asp"><TABLE>
+            <TR><TD><B>Front L</B></TD><TD><input id='RangeCVFL' type='range' value='-1.5' min='-12' max='12' step='0.5'/><span>-1.5</span><INPUT type='hidden' name='textCVFL' value='-1.5'></TD></TR>
+            </TABLE></FORM>
+            """)!;
+        Check("a slider is read", levels.Rows.Count == 1 && levels.Rows[0].Value == "-1.5");
+        Check("it takes its companion's name", levels.Rows[0].Name == "textCVFL");
+
+        // Every page in the catalog points at a content frame, not its frameset.
+        Check("the catalog points at content frames",
+            AspCatalog.Groups.All(g => g.Path.Contains("/d_") && g.Path.EndsWith(".asp")));
+        Check("and never at a submit page",
+            AspCatalog.Groups.All(g => !g.Path.Contains("/s_")));
+        Check("the catalog has no duplicates",
+            AspCatalog.Groups.Select(g => g.Path).Distinct().Count() == AspCatalog.Groups.Count);
     }
 
     // ---------------------------------------------------------------- checks
