@@ -49,7 +49,8 @@ public sealed record ConfigRow(
     IReadOnlyList<ConfigChoice> Options,
     string? Index,
     bool Locked,
-    string? Field = null)
+    string? Field = null,
+    string? Arm = null)
 {
     /// <summary>
     /// What a write names this setting. Usually the same as <see cref="Name"/>, but
@@ -58,6 +59,14 @@ public sealed record ConfigRow(
     /// heading would aim at a field the page does not have.
     /// </summary>
     public string PostName => Field ?? Name;
+
+    /// <summary>
+    /// A value the receiver only applies when a flag beside it is armed. The pre-HEOS
+    /// pages pair a text box with a hidden "off" field that their Set button flips to
+    /// "on" before submitting; posting the number without it is a silent no-op.
+    /// Null for anything that applies on its own, which is every dropdown.
+    /// </summary>
+    public bool NeedsArming => Arm is not null;
 
     public bool HasOptions => Options.Count > 0;
 

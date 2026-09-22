@@ -281,17 +281,25 @@ public sealed partial class AspSetupClient(ILogger<AspSetupClient> log)
     }
 
     /// <summary>The whole form as the browser would send it, with one field changed.</summary>
-    internal static List<KeyValuePair<string, string>>? BuildPost(string html, string name, string value)
+    internal static List<KeyValuePair<string, string>>? BuildPost(string html, string name, string value) =>
+        BuildPost(html, [new(name, value)]);
+
+    internal static List<KeyValuePair<string, string>>? BuildPost(
+        string html, IReadOnlyList<KeyValuePair<string, string>> changes)
     {
         var fields = Fields(html);
 
-        var at = fields.FindIndex(f => f.Key == name);
-        // Refusing rather than appending: a name the page does not have means the
-        // panel and the page have drifted, and inventing a field is how you set
-        // something the receiver never offered.
-        if (at < 0) return null;
+        foreach (var (name, value) in changes)
+        {
+            var at = fields.FindIndex(f => f.Key == name);
+            // Refusing rather than appending: a name the page does not have means the
+            // panel and the page have drifted, and inventing a field is how you set
+            // something the receiver never offered.
+            if (at < 0) return null;
 
-        fields[at] = new(name, value);
+            fields[at] = new(name, value);
+        }
+
         return fields;
     }
 
@@ -300,16 +308,22 @@ public sealed partial class AspSetupClient(ILogger<AspSetupClient> log)
     /// Returns the page as it stands afterwards - which is the only honest answer
     /// to whether the change took.
     /// </summary>
+    public Task<AspPage?> WriteAsync(
+        string host, string contentPath, string name, string value, CancellationToken ct) =>
+        WriteAsync(host, contentPath, [new(name, value)], ct);
+
     public async Task<AspPage?> WriteAsync(
-        string host, string contentPath, string name, string value, CancellationToken ct)
+        string host, string contentPath, IReadOnlyList<KeyValuePair<string, string>> changes,
+        CancellationToken ct)
     {
         var html = await GetAsync(host, contentPath, ct);
         if (html is null) return null;
 
-        var fields = BuildPost(html, name, value);
+        var fields = BuildPost(html, changes);
         if (fields is null)
         {
-            log.LogWarning("{Field} is not on {Path}; not posting", name, contentPath);
+            log.LogWarning("{Fields} not all on {Path}; not posting",
+                string.Join(", ", changes.Select(c => c.Key)), contentPath);
             return null;
         }
 
@@ -405,13 +419,15 @@ public sealed partial class AspSetupClient(ILogger<AspSetupClient> log)
                 var first = controls[0];
                 page.Rows.Add(new ConfigRow(
                     first.Name, label.Length > 0 ? label : Pretty(first.Name),
-                    first.Value, first.Options, null, page.Locked));
+                    first.Value, first.Options, null, page.Locked,
+                    Arm: first.Options.Count == 0 ? ArmFor(html, first.Name) : null));
 
                 // Anything beside it is that setting's companion - the box that holds
                 // the number when the radio says "a specific level".
                 foreach (var extra in controls.Skip(1).Where(c => c.Value.Length > 0))
                     page.Rows.Add(new ConfigRow(
-                        extra.Name, $"{label} value", extra.Value, extra.Options, null, page.Locked));
+                        extra.Name, $"{label} value", extra.Value, extra.Options, null, page.Locked,
+                        Arm: extra.Options.Count == 0 ? ArmFor(html, extra.Name) : null));
                 continue;
             }
 
@@ -429,6 +445,37 @@ public sealed partial class AspSetupClient(ILogger<AspSetupClient> log)
 
         return page;
     }
+
+    /// <summary>
+    /// The hidden flag that has to be armed for this text box's value to be applied,
+    /// or null when there is none and the box should stay read-only.
+    ///
+    /// The pages name it after the box - textAudioDelay is armed by setAudioDelay -
+    /// but Channel Levels puts four boxes behind one setCLA, so a page with exactly
+    /// one arming flag of its own uses that. Anything less certain than those two is
+    /// left alone: offering an edit that silently does nothing is worse than not
+    /// offering it.
+    /// </summary>
+    internal static string? ArmFor(string html, string field)
+    {
+        var hidden = Hiddens(html);
+
+        if (field.StartsWith("text", StringComparison.OrdinalIgnoreCase))
+        {
+            var named = "set" + field[4..];
+            if (hidden.Contains(named)) return named;
+        }
+
+        var only = hidden.Where(h => !Guards.Contains(h)).ToList();
+        return only.Count == 1 ? only[0] : null;
+    }
+
+    private static readonly string[] Guards = ["setPureDirectOn", "setSetupLock"];
+
+    /// <summary>Hidden fields whose value is "off": the ones a Set button arms.</summary>
+    private static HashSet<string> Hiddens(string html) =>
+        HiddenOff().Matches(html).Select(m => m.Groups["name"].Value)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
 
     private sealed record Control(string Name, string Value, IReadOnlyList<ConfigChoice> Options);
 
@@ -579,6 +626,10 @@ public sealed partial class AspSetupClient(ILogger<AspSetupClient> log)
 
     [GeneratedRegex(@"(<table\b[^>]*>)(\s*)(?=<td\b)", RegexOptions.IgnoreCase)]
     private static partial Regex TableThenCell();
+
+    [GeneratedRegex(@"<input[^>]*type=['""]hidden['""][^>]*name=['""](?<name>set[^'""]+)['""][^>]*value=['""]off['""]",
+        RegexOptions.IgnoreCase)]
+    private static partial Regex HiddenOff();
 
     [GeneratedRegex(@"<form\b[^>]*>(?<body>.*?)</form>", RegexOptions.IgnoreCase | RegexOptions.Singleline)]
     private static partial Regex FormExtent();

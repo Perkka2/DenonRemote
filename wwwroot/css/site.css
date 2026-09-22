@@ -454,6 +454,10 @@ html, body {
 .track-text span { color: var(--dim); font-size: 14px; }
 .track-text .dimmer { font-size: 13px; opacity: .7; }
 
+/* A value the receiver only takes when its Set is pressed. */
+.valued { display: flex; gap: 8px; align-items: center; }
+.valued .narrow { width: 90px; text-align: right; }
+
 /* The pre-HEOS setup tree has six menus, so its tiles are grouped under them. */
 .section-name {
     margin: 14px 0 6px; font-size: 12px; letter-spacing: .06em;

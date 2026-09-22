@@ -61,6 +61,13 @@
             {
                 <p class="muted-text">Nothing here can change while @why.</p>
             }
+            @if (Elsewhere)
+            {
+                @* The EQ tab drives the same bands with a proper set of sliders and
+                   reads them back; a second, worse copy of it here would only be a
+                   way to disagree with itself. *@
+                <p class="muted-text">The band controls are on the <strong>EQ</strong> tab.</p>
+            }
 
             @if (!string.IsNullOrEmpty(message))
             {
@@ -89,7 +96,7 @@
                             {
                                     var cell = Cell(index, column);
                                 <span class="matrix-cell">
-                                    @if (cell is not null && cell.Editable)
+                                    @if (cell is not null && cell.Editable && !Elsewhere)
                                     {
                                         <select class="text" value="@cell.Value" @key="(reads, index, column)"
                                                 @onchange="args => WriteAsync(cell, args)">
@@ -116,7 +123,7 @@
                     var current = row;
                     <div class="setting wide">
                         <span>@current.Label</span>
-                        @if (current.Editable)
+                        @if (current.Editable && !Elsewhere)
                         {
                             <select class="text" value="@current.Value" @key="(reads, current.Name)"
                                     @onchange="args => WriteAsync(current, args)">
@@ -125,6 +132,16 @@
                                     <option value="@choice.Code" selected="@(choice.Code == current.Value)">@choice.Text</option>
                                 }
                             </select>
+                        }
+                        else if (current.NeedsArming && !current.Locked && !Elsewhere)
+                        {
+                            @* A number the receiver only takes when its Set is pressed:
+                               the page works that way, so this does too. *@
+                            <span class="valued">
+                                <input class="text narrow" value="@current.Value" @key="(reads, current.Name)"
+                                       @onchange="args => Typed(current, args)" />
+                                <button class="pill" @onclick="() => SetAsync(current)">Set</button>
+                            </span>
                         }
                         else
                         {
@@ -153,6 +170,10 @@
     private string? content;
     private string message = "";
     private int reads;
+    private readonly Dictionary<string, string> typed = [];
+
+    private void Typed(ConfigRow row, ChangeEventArgs args) =>
+        typed[row.PostName] = args.Value?.ToString() ?? "";
 
     /// <summary>
     /// The menus come from the receiver, so they are read once when the tab opens
@@ -187,6 +208,10 @@
             return names.Count > 1 && Indexes.Count > 1 ? names : [];
         }
     }
+
+    /// <summary>Screens the app already does better elsewhere, shown but not edited here.</summary>
+    private bool Elsewhere =>
+        open?.Label.Contains("Graphic EQ", StringComparison.OrdinalIgnoreCase) == true;
 
     private ConfigRow? Cell(string index, string name) =>
         screen?.Rows.FirstOrDefault(r => r.Index == index && r.Name == name);
@@ -227,6 +252,27 @@
             : $"{what} didn't change — the receiver still reports {Display(after)}.";
     }
 
+    /// <summary>
+    /// Applies a typed value the way the page's Set button does: the number, and the
+    /// hidden flag beside it turned on. Without the flag the receiver takes the post
+    /// and ignores the number.
+    /// </summary>
+    private async Task SetAsync(ConfigRow row)
+    {
+        if (content is null || row.Arm is null) return;
+
+        var value = typed.TryGetValue(row.PostName, out var entered) ? entered : row.Value;
+
+        screen = await Setup.WriteAsync(Host, content,
+            [new(row.PostName, value), new(row.Arm, "on")], CancellationToken.None);
+        reads++;
+
+        var after = screen?.Rows.FirstOrDefault(r => r.Name == row.Name && r.Index == row.Index);
+        message = screen is null ? $"{row.Label} — the receiver didn't answer."
+            : after?.Value == value ? $"{row.Label} set to {value}."
+            : $"{row.Label} didn't change — the receiver still reports {Display(after)}.";
+    }
+
     private async Task ToggleAsync(AspGroup group)
     {
         if (open == group) { open = null; screen = null; message = ""; return; }
@@ -234,6 +280,7 @@
         open = group;
         screen = null;
         message = "";
+        typed.Clear();
         loading = true;
         try
         {
