@@ -42,7 +42,25 @@ public sealed partial class AjaxUiReader(ILogger<AjaxUiReader> log)
     /// The receiver's own menu. Sections it will not describe are left out, and the
     /// caller falls back to the catalog for those rather than showing nothing.
     /// </summary>
+    /// <summary>
+    /// Read once per receiver and kept. These files do not change while the app is
+    /// running, one of them is 700 KB, and asking for a dozen of them every time the
+    /// Setup tab opens is exactly the kind of traffic that makes the receiver stop
+    /// answering.
+    /// </summary>
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, IReadOnlyList<ConfigGroup>>
+        Cache = new(StringComparer.OrdinalIgnoreCase);
+
     public async Task<IReadOnlyList<ConfigGroup>> ReadAsync(string host, CancellationToken ct)
+    {
+        if (Cache.TryGetValue(host, out var known)) return known;
+
+        var groups = await ReadFreshAsync(host, ct);
+        if (groups.Count > 0) Cache[host] = groups;
+        return groups;
+    }
+
+    private async Task<IReadOnlyList<ConfigGroup>> ReadFreshAsync(string host, CancellationToken ct)
     {
         var words = await StringsAsync(host, ct);
         if (words.Count == 0) return [];
@@ -192,18 +210,20 @@ public sealed partial class AjaxUiReader(ILogger<AjaxUiReader> log)
         return js is null ? [] : Strings(js);
     }
 
-    private async Task<string?> GetAsync(string host, string path, CancellationToken ct)
-    {
-        try
+    private Task<string?> GetAsync(string host, string path, CancellationToken ct) =>
+        // In its turn, like every other call to the receiver.
+        ReceiverGate.RunAsync(host, async () =>
         {
-            return await Client.GetStringAsync(Url(host, path), ct);
-        }
-        catch (Exception ex)
-        {
-            log.LogDebug("Setup UI {Path} on {Host}: {Message}", path, host, ex.Message);
-            return null;
-        }
-    }
+            try
+            {
+                return await Client.GetStringAsync(Url(host, path), ct);
+            }
+            catch (Exception ex)
+            {
+                log.LogDebug("Setup UI {Path} on {Host}: {Message}", path, host, ex.Message);
+                return null;
+            }
+        }, text => text is null, ct);
 
     [GeneratedRegex(@"(?<name>CONFIG_[A-Z0-9_]+)\s*:\s*""(?<type>\d+)""")]
     private static partial Regex ConfigConstant();

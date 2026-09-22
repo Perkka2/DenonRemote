@@ -32,6 +32,7 @@ public static class SelfTest
         NetworkPlayer();
         AspSetupPages();
         SetupUiMenu();
+        ReceiverPacing();
 
         Console.WriteLine();
         Console.WriteLine($"  {_passed} passed, {Failures.Count} failed");
@@ -546,6 +547,45 @@ public static class SelfTest
             AjaxUiReader.Order(declared, []).OrderBy(x => x).SequenceEqual(declared));
         Check("a menu entry the section does not have is ignored",
             !AjaxUiReader.Order(declared, ["CONFIG_Z"]).Contains("CONFIG_Z"));
+    }
+
+    /// <summary>
+    /// The receiver buckles under rapid requests, so the app queues behind itself and
+    /// tries again. Which answers count as buckling is the whole of it: retrying a
+    /// real refusal would be pointless, and not retrying a dropped connection is how
+    /// a setting comes to look like one the receiver does not have.
+    /// </summary>
+    private static void ReceiverPacing()
+    {
+        static ProbeResult Result(int status, string? error = null) =>
+            new("GET", "https://x/ajax/video/get_config?type=9", status, "text/xml", "", error);
+
+        Check("a refused connection is worth another go",
+            Result(0, "Connection refused (10.0.1.120:10443)").Dropped);
+        Check("so is a timeout",
+            Result(0, "The request was canceled due to the configured HttpClient.Timeout").Dropped);
+        Check("so is a failed handshake",
+            Result(0, "The SSL connection could not be established").Dropped);
+        Check("so is a 500 it does not mean", Result(500).Dropped);
+
+        // These are answers. Asking again would only be rude.
+        Check("a 403 is an answer", !Result(403).Dropped);
+        Check("a 404 is an answer", !Result(404).Dropped);
+        Check("and so is a 200", !Result(200).Dropped);
+
+        // The gate hands back the first answer that is not the receiver buckling.
+        var tries = 0;
+        var settled = ReceiverGate.RunAsync("10.0.1.120",
+            () => { tries++; return Task.FromResult(tries); },
+            n => n < 2, CancellationToken.None).GetAwaiter().GetResult();
+        Check("it tries again after a drop", settled == 2 && tries == 2);
+
+        // ...and gives up rather than hammering it forever.
+        var forever = 0;
+        ReceiverGate.RunAsync("10.0.1.121",
+            () => { forever++; return Task.FromResult(0); },
+            _ => true, CancellationToken.None).GetAwaiter().GetResult();
+        Check("but not forever", forever == 3);
     }
 
     // ---------------------------------------------------------------- checks
