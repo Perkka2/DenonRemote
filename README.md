@@ -136,6 +136,29 @@ can't be changed right now — no centre speaker, no centre settings — so it s
 read-only as "fixed by the current setup". Writes are read back and compared, so a
 setting the receiver quietly declines says so instead of appearing to have worked.
 
+**The network player** (Playing) has two entirely different sources. The HEOS
+generation answers the HEOS CLI on 1255. The pre-HEOS units have no HEOS at all
+and answer the AppCommand API with an empty document, so the only account of what
+they are playing is the one their own web UI uses:
+
+```
+GET  /goform/formNetAudio_StatusXml.xml
+POST /NetAudio/index.put.asp   cmd0=PutNetAudioCommand/CurDown
+                               cmd1=aspMainZone_WebUpdateStatus/
+                               ZoneName=MAIN ZONE
+```
+
+Both were read out of that UI's JavaScript. The second field matters: without it
+the next status document can still describe the screen as it was before the
+keypress.
+
+**That document describes a screen, not a track.** `szLine` is a ten-slot display
+buffer. Playing a track it reads Now Playing / title / artist / album; browsing a
+folder the same slots hold list entries, with `chFlag` marking the cursor. Reading
+slot 2 as "the artist" would confidently report a menu item as the artist, so the
+panel renders the screen as the screen - which is true in both modes - and the
+tests drive a stand-in through both to prove it follows.
+
 **Names come from the receiver** wherever it will say: input names and hidden inputs,
 zone names and Quick Select names. On newer firmware, where the whole legacy
 `/goform/` API answers 403, these come from the setup API instead.

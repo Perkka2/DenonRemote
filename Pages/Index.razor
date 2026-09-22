@@ -96,7 +96,14 @@ else
     }
     else if (section == "playing")
     {
-        <NowPlaying Client="client" />
+        @if (client.NetAudio is { } player)
+        {
+            <NetAudioPanel Player="player" Host="@client.Config.Host" />
+        }
+        else
+        {
+            <NowPlaying Client="client" />
+        }
     }
     else
     {
@@ -198,7 +205,8 @@ else
         if (candidate.Eq.Available) sections.Add("eq");
         sections.Add("system");
         sections.Add("menu");
-        if (candidate.Profile.Heos) sections.Add("playing");
+        // Either generation can say what it is playing; they just say it differently.
+        if (candidate.Profile.Heos || candidate.Profile.NetAudio) sections.Add("playing");
         if (candidate.Profile.SetupApi) { sections.Add("info"); sections.Add("setup"); }
         return sections;
     }

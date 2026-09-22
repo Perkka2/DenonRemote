@@ -1,0 +1,117 @@
+@* The pre-HEOS network player.
+
+   The receiver describes its own screen rather than the music, so this shows the
+   screen. That is right in both modes: playing a track it reads Now Playing /
+   title / artist / album, and browsing a folder it reads the list, with the
+   cursor line marked. Nothing here guesses which line is which. *@
+
+@implements IDisposable
+@inject ILogger<NetAudioPanel> Log
+
+<section class="panel">
+    <div class="quick-head">
+        <h2>Now playing</h2>
+        @if (!string.IsNullOrWhiteSpace(Player.State.Service))
+        {
+            <span class="now">@Player.State.Service</span>
+        }
+    </div>
+
+    @if (!Player.State.Known)
+    {
+        <p class="muted-text">Reading…</p>
+    }
+    else if (Player.State.Idle)
+    {
+        <p class="muted-text">The network player isn't showing anything.</p>
+    }
+    else
+    {
+        <div class="track">
+            @if (Art is { } art)
+            {
+                @* The receiver reports art it cannot always serve - browsing a folder
+                   it still says it has some - and a broken-image icon is worse than
+                   no image, so a failed load takes the element away. *@
+                <img class="cover" src="@art" alt="" onerror="this.remove()" />
+            }
+            <div class="track-text">
+                @if (Player.State.Heading is { } heading)
+                {
+                    <span class="dimmer">@heading</span>
+                }
+                @foreach (var (line, index) in Numbered)
+                {
+                    <span class="@(Marked(index) ? "screen-line here" : "screen-line")">@line</span>
+                }
+            </div>
+        </div>
+
+        <div class="transport">
+            <button class="step" title="Back" @onclick="() => Send(Player.CursorLeft)">&#9664;</button>
+            <button class="step" title="Up" @onclick="() => Send(Player.CursorUp)">&#9650;</button>
+            <button class="step wide" title="Select" @onclick="() => Send(Player.Enter)">OK</button>
+            <button class="step" title="Down" @onclick="() => Send(Player.CursorDown)">&#9660;</button>
+            <button class="step" title="Forward" @onclick="() => Send(Player.CursorRight)">&#9654;</button>
+        </div>
+
+        <div class="transport">
+            <button class="step" title="Page up" @onclick="() => Send(Player.PageUp)">&#8607;</button>
+            <button class="step" title="Stop" @onclick="() => Send(Player.Stop)">&#9632;</button>
+            <button class="step" title="Page down" @onclick="() => Send(Player.PageDown)">&#8609;</button>
+        </div>
+
+        <div class="row">
+            <button class="pill @(Player.State.Repeat ? "active" : "")"
+                    @onclick="() => Send(Player.ToggleRepeat)">Repeat</button>
+            <button class="pill @(Player.State.Shuffle ? "active" : "")"
+                    @onclick="() => Send(Player.ToggleShuffle)">Shuffle</button>
+        </div>
+    }
+</section>
+
+@code {
+    [Parameter, EditorRequired] public NetAudioClient Player { get; set; } = default!;
+    [Parameter, EditorRequired] public string Host { get; set; } = "";
+
+    private Timer? _poll;
+
+    /// <summary>The receiver's own UI polls once a second; this tab is not always open.</summary>
+    private static readonly TimeSpan Interval = TimeSpan.FromSeconds(2);
+
+    private IEnumerable<(string Line, int Index)> Numbered =>
+        Player.State.Lines.Select((line, index) => (line, index)).Skip(1).Where(x => x.line.Length > 0);
+
+    private bool Marked(int index) =>
+        index < Player.State.LineFlags.Count && Player.State.LineFlags[index] != 0;
+
+    private string? Art => Player.ArtUrl(Host);
+
+    protected override void OnInitialized() =>
+        _poll = new Timer(_ => _ = PollAsync(), null, Interval, Interval);
+
+    private async Task PollAsync()
+    {
+        try
+        {
+            await Player.RefreshAsync(Host, CancellationToken.None);
+            await InvokeAsync(StateHasChanged);
+        }
+        catch (ObjectDisposedException)
+        {
+            // The circuit went away between the tick and the render.
+        }
+        catch (Exception ex)
+        {
+            Log.LogDebug("Network player poll failed: {Message}", ex.Message);
+        }
+    }
+
+    private async Task Send(Func<string, CancellationToken, Task> command)
+    {
+        await command(Host, CancellationToken.None);
+        await InvokeAsync(StateHasChanged);
+    }
+
+    public void Dispose() => _poll?.Dispose();
+}

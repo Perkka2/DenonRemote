@@ -71,6 +71,12 @@ public sealed class DenonClient : IAsyncDisposable
     public HeosClient? Heos { get; private set; }
 
     /// <summary>
+    /// The pre-HEOS network player. Present only where HEOS is not: those units have
+    /// no other way to say what they are playing.
+    /// </summary>
+    public NetAudioClient? NetAudio { get; private set; }
+
+    /// <summary>
     /// The graphic EQ, which lives outside the control protocol entirely - see
     /// <see cref="GraphicEqClient"/>. Not every model exposes one.
     /// </summary>
@@ -175,6 +181,20 @@ public sealed class DenonClient : IAsyncDisposable
                 Heos = new HeosClient(Config.Host, _loggerFactory.CreateLogger<HeosClient>());
                 Heos.StateChanged += () => Touch();
                 Heos.Start();
+            }
+
+            // Only where HEOS isn't: on a HEOS unit the CLI is the better source, and
+            // asking both would be two pollers describing the same thing.
+            if (!Profile.Heos && NetAudio is null)
+            {
+                var player = new NetAudioClient(_loggerFactory.CreateLogger<NetAudioClient>());
+                if (await player.ProbeAsync(Config.Host, ct))
+                {
+                    player.Changed += Touch;
+                    NetAudio = player;
+                    Profile.NetAudio = true;
+                    await player.RefreshAsync(Config.Host, ct);
+                }
             }
 
             Touch();
