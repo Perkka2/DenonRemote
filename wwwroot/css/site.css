@@ -454,6 +454,9 @@ html, body {
 .track-text span { color: var(--dim); font-size: 14px; }
 .track-text .dimmer { font-size: 13px; opacity: .7; }
 
+/* A setting the model family has and this unit does not. */
+.tile.absent { opacity: .45; }
+
 /* A value the receiver only takes when its Set is pressed. */
 .valued { display: flex; gap: 8px; align-items: center; }
 .valued .narrow { width: 90px; text-align: right; }

@@ -14,10 +14,11 @@
     </p>
 
     <div class="grid">
-        @foreach (var group in AjaxCatalog.Groups)
+        @foreach (var group in groups)
         {
             var current = group;
-            <button class="tile @(open == current ? "active" : "")" @onclick="() => ToggleAsync(current)">
+            <button class="tile @(open == current ? "active" : "") @(absent.Contains(current) ? "absent" : "")"
+                    @onclick="() => ToggleAsync(current)">
                 @current.Label
             </button>
         }
@@ -43,7 +44,7 @@
         }
         else if (rows.Count == 0)
         {
-            <p class="muted-text">This receiver didn't answer for that section.</p>
+            <p class="muted-text">This receiver doesn't have that setting.</p>
         }
         else if (Columns.Count > 1)
         {
@@ -151,8 +152,16 @@
     </section>
 }
 
+@inject AjaxUiReader Ui
+@inject ILogger<SetupBrowser> Log
+
 @code {
     [Parameter, EditorRequired] public DenonClient Client { get; set; } = default!;
+
+    private IReadOnlyList<ConfigGroup> groups = AjaxCatalog.Groups;
+
+    /// <summary>Groups this unit turned out not to have, so they stop looking live.</summary>
+    private readonly HashSet<ConfigGroup> absent = [];
 
     private ConfigGroup? open;
     private IReadOnlyList<ConfigRow> rows = [];
@@ -160,6 +169,32 @@
     private bool loading;
     private string message = "";
     private int reads;
+
+    /// <summary>
+    /// The receiver's setup UI describes its own menu - which screens exist, in what
+    /// order, and what they are called - so that is used where it can be read, and
+    /// the built-in catalog only fills in the sections it cannot describe.
+    ///
+    /// What it describes is the model family, not this exact unit: it lists Dirac
+    /// Live and a tactile transducer whether or not this one has them. A screen the
+    /// receiver then answers nothing for is marked rather than hidden, because
+    /// "nothing here" is a fact about the receiver worth showing once.
+    /// </summary>
+    protected override async Task OnInitializedAsync()
+    {
+        try
+        {
+            var live = await Ui.ReadAsync(Client.Config.Host, CancellationToken.None);
+            if (live.Count == 0) return;
+
+            var described = live.Select(g => g.Section).ToHashSet(StringComparer.OrdinalIgnoreCase);
+            groups = [.. live, .. AjaxCatalog.Groups.Where(g => !described.Contains(g.Section))];
+        }
+        catch (Exception ex)
+        {
+            Log.LogDebug("Reading the setup UI failed: {Message}", ex.Message);
+        }
+    }
 
     // ---------------------------------------------------------------- shape
 
@@ -342,6 +377,7 @@
         {
             (rows, root) = await Client.ReadConfigAsync(group);
             reads++;
+            if (rows.Count == 0) absent.Add(group); else absent.Remove(group);
         }
         finally
         {

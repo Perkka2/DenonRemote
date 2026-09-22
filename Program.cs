@@ -21,6 +21,31 @@ if (options.Unknown.Count > 0)
 
 if (options.SelfTest) return SelfTest.Run();
 
+if (options.ReadUi is { } uiDir)
+{
+    var words = AjaxUiReader.Strings(await File.ReadAllTextAsync(Path.Combine(uiDir, "LanguageStrings.js")));
+    Console.WriteLine($"  {words.Count} strings\n");
+
+    foreach (var (path, name) in new[] { ("speakers", "Speakers"), ("audio", "Audio"),
+        ("inputs", "Inputs"), ("video", "Video"), ("general", "General"), ("network", "Network") })
+    {
+        var iface = Path.Combine(uiDir, $"{path}_{name}ServerInterface.js");
+        var settings = Path.Combine(uiDir, $"{path}_{name}Settings.js");
+        if (!File.Exists(iface) || !File.Exists(settings)) continue;
+
+        var types = AjaxUiReader.Types(await File.ReadAllTextAsync(iface));
+        var menu = AjaxUiReader.Menu(await File.ReadAllTextAsync(settings));
+        Console.WriteLine($"=== {path}: {types.Count} types, {menu.Count} in the menu");
+        foreach (var (constant, key) in menu)
+        {
+            if (!types.TryGetValue(constant, out var type)) continue;
+            Console.WriteLine($"    {type,3}  {(words.TryGetValue(key, out var w) ? w : "?")}");
+        }
+        Console.WriteLine();
+    }
+    return 0;
+}
+
 if (options.ShowPost is { } postFile)
 {
     foreach (var field in AspSetupClient.Fields(await File.ReadAllTextAsync(postFile)))
@@ -117,6 +142,7 @@ builder.Services.AddSingleton<HttpProbe>();
 builder.Services.AddSingleton<GraphicEqClient>();
 builder.Services.AddSingleton<AjaxConfigClient>();
 builder.Services.AddSingleton<ReceiverInfoReader>();
+builder.Services.AddSingleton<AjaxUiReader>();
 builder.Services.AddHostedService<RegistryHostedService>();
 
 var app = builder.Build();
