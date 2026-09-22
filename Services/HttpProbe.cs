@@ -124,10 +124,15 @@ public sealed class HttpProbe(ILogger<HttpProbe> log)
     /// </summary>
     public static IEnumerable<(string Method, string Url, string? Body)> DeepTargets(string host)
     {
+        // Ranges from what the receiver's own setup UI declares, with room over the
+        // top. They were guessed before, and guessed short: video stopped at 4, so
+        // TV Format at 9 was never captured and looked for all the world like a
+        // setting the receiver did not have.
         (string Category, int Max)[] categories =
         [
-            ("general", 17), ("audio", 12), ("inputs", 6),
-            ("speakers", 8), ("video", 4), ("home", 1),
+            ("general", 24), ("audio", 16), ("inputs", 8), ("speakers", 20),
+            ("video", 16), ("network", 14), ("advanced", 12), ("control", 8),
+            ("home", 2),
         ];
 
         foreach (var (category, max) in categories)

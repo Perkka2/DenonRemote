@@ -495,6 +495,15 @@ public static class SelfTest
             """;
         Check("a type number is read", AjaxUiReader.Types(constants)["CONFIG_SPEAKERCONFIG"] == 3);
         Check("a tag that is not a type is skipped", !AjaxUiReader.Types(constants).ContainsKey("XML_BASS_TAG"));
+        // CONFIG_OPTION_* number the choices inside a setting, not settings, and
+        // their numbers collide with real ones.
+        const string withOptions = """
+            CONFIG_AUDYSSEY:"9",CONFIG_OPTION_AUDYSSEY_MULTEQ:"2"
+            """;
+        Check("an option index is not a screen",
+            !AjaxUiReader.Types(withOptions).ContainsKey("CONFIG_OPTION_AUDYSSEY_MULTEQ"));
+        Check("but the setting it belongs to is",
+            AjaxUiReader.Types(withOptions)["CONFIG_AUDYSSEY"] == 9);
 
         // The menu: an array of constants with an array of labels beside it.
         const string menu = """
@@ -502,20 +511,41 @@ public static class SelfTest
             n=[str.getString("A_4051",globalsSettings.getLanguage()),str.getString("A_1570",globalsSettings.getLanguage()),
             str.getString("A_1571",globalsSettings.getLanguage())];return n};
             """;
-        var paired = AjaxUiReader.Menu(menu);
-        Check("the menu pairs one for one", paired.Count == 3);
-        Check("in the receiver's own order",
-            paired[1].Constant == "CONFIG_AMPASSIGN" && paired[1].Key == "A_1570");
+        var order = AjaxUiReader.Menu(menu);
+        Check("the menu gives an order", order.Count == 3);
+        Check("in the receiver's own order", order[1] == "CONFIG_AMPASSIGN");
+        Check("and nothing at all is fine", AjaxUiReader.Menu("var t=[];").Count == 0);
 
-        // Without the length check, General matched a nearby array of zone names and
-        // read back "Language -> ZONE2": confident, wrong, invisible from the UI.
-        const string mismatched = """
-            var t=[g.CONFIG_SETUPMENU,s.CONFIG_LANGUAGE,s.CONFIG_ECO,s.CONFIG_ZONE2SETUP],
-            z=[str.getString("A_0001",globalsSettings.getLanguage()),str.getString("A_0002",globalsSettings.getLanguage()),
-            str.getString("A_0003",globalsSettings.getLanguage())];
-            """;
-        Check("a list of the wrong length is refused", AjaxUiReader.Menu(mismatched).Count == 0);
-        Check("and nothing at all is refused", AjaxUiReader.Menu("var t=[];").Count == 0);
+        // Names come from the string table by name, not from pairing: CONFIG_TVFORMAT
+        // and "TV Format" are the same word without the spaces. That reaches the
+        // sections whose menus name nothing at all.
+        var byName = new Dictionary<string, string>(StringComparer.Ordinal)
+        {
+            ["TVFORMAT"] = "TV Format",
+            ["CENTERLEVELADJUST"] = "Center Level Adjust",
+            ["ZONE2SETUP"] = "ZONE2 Setup",
+        };
+
+        Check("a setting is named by its own word",
+            AjaxUiReader.Name("CONFIG_TVFORMAT", byName) == "TV Format");
+        Check("running words apart is no obstacle",
+            AjaxUiReader.Name("CONFIG_CENTERLEVELADJUST", byName) == "Center Level Adjust");
+        Check("nor are digits", AjaxUiReader.Name("CONFIG_ZONE2SETUP", byName) == "ZONE2 Setup");
+        Check("an unknown one keeps something readable",
+            AjaxUiReader.Name("CONFIG_SPEAKER_LAYOUT", byName) == "Speaker Layout");
+        Check("normalising ignores case, spaces and punctuation",
+            AjaxUiReader.Normalise("Speaker Config.") == AjaxUiReader.Normalise("SPEAKERCONFIG"));
+
+        // Everything the receiver declares is listed, menu or no menu: the menu only
+        // says what comes first.
+        var declared = new[] { "CONFIG_A", "CONFIG_B", "CONFIG_C" };
+        Check("the menu orders what it mentions",
+            AjaxUiReader.Order(declared, ["CONFIG_C", "CONFIG_A"]).SequenceEqual(
+                new[] { "CONFIG_C", "CONFIG_A", "CONFIG_B" }));
+        Check("and nothing declared is dropped",
+            AjaxUiReader.Order(declared, []).OrderBy(x => x).SequenceEqual(declared));
+        Check("a menu entry the section does not have is ignored",
+            !AjaxUiReader.Order(declared, ["CONFIG_Z"]).Contains("CONFIG_Z"));
     }
 
     // ---------------------------------------------------------------- checks

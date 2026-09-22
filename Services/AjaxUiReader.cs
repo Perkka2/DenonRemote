@@ -26,11 +26,14 @@ public sealed partial class AjaxUiReader(ILogger<AjaxUiReader> log)
     })
     { Timeout = TimeSpan.FromSeconds(12) };
 
-    /// <summary>The sections the UI is split into, and the file names they use.</summary>
+    /// <summary>
+    /// The sections the UI is split into, in the order it shows them, and the file
+    /// names they use.
+    /// </summary>
     private static readonly (string Path, string Name)[] Sections =
     [
-        ("speakers", "Speakers"), ("audio", "Audio"), ("inputs", "Inputs"),
-        ("video", "Video"), ("general", "General"), ("network", "Network"),
+        ("audio", "Audio"), ("video", "Video"), ("inputs", "Inputs"),
+        ("speakers", "Speakers"), ("network", "Network"), ("general", "General"),
     ];
 
     private static string Url(string host, string path) => $"https://{host}:10443{path}";
@@ -46,25 +49,79 @@ public sealed partial class AjaxUiReader(ILogger<AjaxUiReader> log)
 
         var groups = new List<ConfigGroup>();
 
+        // A string is only usable as a name if exactly one reads back to it; two
+        // settings that normalise alike would be a coin toss between them.
+        var byName = words.Values
+            .Where(v => Normalise(v).Length > 0)
+            .GroupBy(Normalise)
+            .Where(g => g.Distinct(StringComparer.Ordinal).Count() == 1)
+            .ToDictionary(g => g.Key, g => g.First(), StringComparer.Ordinal);
+
         foreach (var (path, name) in Sections)
         {
             if (ct.IsCancellationRequested) break;
 
             var iface = await GetAsync(host, $"/{path}/{name}ServerInterface.js", ct);
-            var settings = await GetAsync(host, $"/{path}/{name}Settings.js", ct);
-            if (iface is null || settings is null) continue;
+            if (iface is null) continue;
 
             var types = Types(iface);
-            foreach (var (constant, key) in Menu(settings))
-            {
-                if (!types.TryGetValue(constant, out var type)) continue;
-                if (!words.TryGetValue(key, out var label) || label.Length == 0) continue;
+            var settings = await GetAsync(host, $"/{path}/{name}Settings.js", ct);
+            var order = settings is null ? [] : Menu(settings);
 
-                groups.Add(new ConfigGroup(path, type, label));
-            }
+            foreach (var constant in Order(types.Keys, order))
+                groups.Add(new ConfigGroup(path, types[constant], Name(constant, byName)));
         }
 
         return groups;
+    }
+
+    /// <summary>
+    /// The settings of a section in the order its menu lists them, with anything the
+    /// menu does not mention after. The menu is only trusted for order - it is an
+    /// array in minified code, and being wrong about it costs nothing worse than an
+    /// odd running order.
+    /// </summary>
+    internal static IEnumerable<string> Order(IEnumerable<string> declared, IReadOnlyList<string> menu)
+    {
+        var left = new HashSet<string>(declared, StringComparer.Ordinal);
+
+        foreach (var constant in menu)
+            if (left.Remove(constant)) yield return constant;
+
+        foreach (var constant in left.OrderBy(c => c, StringComparer.Ordinal))
+            yield return constant;
+    }
+
+    /// <summary>
+    /// What to call a setting. CONFIG_TVFORMAT and "TV Format" are the same word with
+    /// the spaces taken out, so the receiver's own string table can name it: strip
+    /// everything but letters and digits from both and require an exact match.
+    ///
+    /// This is not fuzzy matching - it either is the same word or it is not - and it
+    /// reaches the sections whose menus cannot be read at all. Pairing the menu
+    /// positionally named nothing in Audio, General or Network; this names most of
+    /// them. Anything it cannot name keeps the receiver's own constant, which is
+    /// ugly but true.
+    /// </summary>
+    internal static string Name(string constant, IReadOnlyDictionary<string, string> byName)
+    {
+        var bare = constant.StartsWith("CONFIG_", StringComparison.Ordinal) ? constant[7..] : constant;
+        return byName.TryGetValue(Normalise(bare), out var word) ? word : Readable(bare);
+    }
+
+    internal static string Normalise(string text)
+    {
+        var kept = new System.Text.StringBuilder(text.Length);
+        foreach (var c in text) if (char.IsLetterOrDigit(c)) kept.Append(char.ToUpperInvariant(c));
+        return kept.ToString();
+    }
+
+    /// <summary>A last resort: SPEAKER_LAYOUT reads better than CONFIG_SPEAKER_LAYOUT.</summary>
+    private static string Readable(string constant)
+    {
+        var words = constant.Split('_', StringSplitOptions.RemoveEmptyEntries)
+            .Select(w => w.Length > 1 ? char.ToUpperInvariant(w[0]) + w[1..].ToLowerInvariant() : w);
+        return string.Join(' ', words);
     }
 
     // ---------------------------------------------------------------- parsing
@@ -73,42 +130,32 @@ public sealed partial class AjaxUiReader(ILogger<AjaxUiReader> log)
     internal static Dictionary<string, int> Types(string js) =>
         ConfigConstant().Matches(js)
             .Where(m => int.TryParse(m.Groups["type"].Value, out _))
+            // CONFIG_OPTION_* number the choices within a setting - Audyssey's MultEQ
+            // is option 2 of setting 9 - and are not screens of their own. Listed as
+            // screens they collide with real type numbers and ask for the wrong one.
+            .Where(m => !m.Groups["name"].Value.StartsWith("CONFIG_OPTION", StringComparison.Ordinal))
             .GroupBy(m => m.Groups["name"].Value)
             .ToDictionary(g => g.Key, g => int.Parse(g.First().Groups["type"].Value));
 
     /// <summary>
-    /// The menu: an array of config constants with an array of label lookups beside
-    /// it, one for one.
+    /// The order the menu lists its settings in - the longest array of config
+    /// constants in the file.
     ///
-    /// Pairing them positionally is only safe with the length check. Without it the
-    /// General section matched a nearby array of zone names and read back
-    /// "Language → ZONE2" - confident, wrong, and impossible to notice from the UI.
-    /// Where nothing lines up this returns nothing and the caller falls back.
+    /// Only the order comes from here. Labels used to as well, paired positionally
+    /// with a neighbouring array of string lookups, and that was worth abandoning:
+    /// it named nothing at all in Audio, General and Network, and in General it
+    /// matched an array of zone names and read back "Language -> ZONE2". Names now
+    /// come from the string table by name, which cannot mispair.
     /// </summary>
-    internal static IReadOnlyList<(string Constant, string Key)> Menu(string js)
+    internal static IReadOnlyList<string> Menu(string js)
     {
-        foreach (Match consts in ConstantArray().Matches(js))
-        {
-            var names = ConfigName().Matches(consts.Groups["body"].Value)
-                .Select(m => m.Value).ToList();
+        var longest = ConstantArray().Matches(js)
+            .Select(m => ConfigName().Matches(m.Groups["body"].Value).Select(c => c.Value).ToList())
+            .OrderByDescending(list => list.Count)
+            .FirstOrDefault();
 
-            foreach (Match labels in LabelArray().Matches(js, consts.Index + consts.Length))
-            {
-                // Only the array that belongs to this one, not any array later on.
-                if (labels.Index - (consts.Index + consts.Length) > NearbyChars) break;
-
-                var keys = StringKey().Matches(labels.Groups["body"].Value)
-                    .Select(m => m.Groups["key"].Value).ToList();
-
-                if (keys.Count == names.Count)
-                    return [.. names.Zip(keys)];
-            }
-        }
-
-        return [];
+        return longest ?? [];
     }
-
-    private const int NearbyChars = 4000;
 
     /// <summary>
     /// Every label the UI can show, in English.
