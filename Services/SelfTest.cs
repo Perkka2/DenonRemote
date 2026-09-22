@@ -31,6 +31,7 @@ public static class SelfTest
         LegacySourceTable();
         NetworkPlayer();
         AspSetupPages();
+        SetupUiMenu();
 
         Console.WriteLine();
         Console.WriteLine($"  {_passed} passed, {Failures.Count} failed");
@@ -468,6 +469,53 @@ public static class SelfTest
                 == "/SETUP/AUDIO/f_audio.asp");
         Check("an absolute link is left alone",
             AspSetupClient.Resolve("/SETUP/Home/d_left_home.asp", "/lib/jquery.js") == "/lib/jquery.js");
+    }
+
+    /// <summary>
+    /// The HEOS-generation receiver's own setup UI, which describes its menu in
+    /// JavaScript. Fragments below are that code's real shape.
+    /// </summary>
+    private static void SetupUiMenu()
+    {
+        // Two dictionaries, merged by the UI. A key in both must take the non-empty
+        // one: read naively, "Speaker Config." comes back as an empty string.
+        const string strings = """
+            var languageStrings={hashStrings_adv:{A_1570:["Amp Assign","Verstärker"],A_1571:["","" ],
+            A_4051:["Speakers","Lautsprecher"]},hashStrings_hd:{A_1570:["Amp Assign","Verstärker"],
+            A_1571:["Speaker Config.","Lautsprecher"],A_9999:["Say \"go\"","x"]}};
+            """;
+
+        var words = AjaxUiReader.Strings(strings);
+        Check("a label is read", words["A_1570"] == "Amp Assign");
+        Check("the non-empty dictionary wins", words["A_1571"] == "Speaker Config.");
+        Check("an escape is undone", words["A_9999"] == "Say \"go\"");
+
+        const string constants = """
+            CONFIG_AMPASSIGN:"2",CONFIG_SPEAKERCONFIG:"3",XML_BASS_TAG:"Bass"
+            """;
+        Check("a type number is read", AjaxUiReader.Types(constants)["CONFIG_SPEAKERCONFIG"] == 3);
+        Check("a tag that is not a type is skipped", !AjaxUiReader.Types(constants).ContainsKey("XML_BASS_TAG"));
+
+        // The menu: an array of constants with an array of labels beside it.
+        const string menu = """
+            x.getSetupMenuCallback=function(e){var t=[g.CONFIG_SETUPMENU,s.CONFIG_AMPASSIGN,s.CONFIG_SPEAKERCONFIG],
+            n=[str.getString("A_4051",globalsSettings.getLanguage()),str.getString("A_1570",globalsSettings.getLanguage()),
+            str.getString("A_1571",globalsSettings.getLanguage())];return n};
+            """;
+        var paired = AjaxUiReader.Menu(menu);
+        Check("the menu pairs one for one", paired.Count == 3);
+        Check("in the receiver's own order",
+            paired[1].Constant == "CONFIG_AMPASSIGN" && paired[1].Key == "A_1570");
+
+        // Without the length check, General matched a nearby array of zone names and
+        // read back "Language -> ZONE2": confident, wrong, invisible from the UI.
+        const string mismatched = """
+            var t=[g.CONFIG_SETUPMENU,s.CONFIG_LANGUAGE,s.CONFIG_ECO,s.CONFIG_ZONE2SETUP],
+            z=[str.getString("A_0001",globalsSettings.getLanguage()),str.getString("A_0002",globalsSettings.getLanguage()),
+            str.getString("A_0003",globalsSettings.getLanguage())];
+            """;
+        Check("a list of the wrong length is refused", AjaxUiReader.Menu(mismatched).Count == 0);
+        Check("and nothing at all is refused", AjaxUiReader.Menu("var t=[];").Count == 0);
     }
 
     // ---------------------------------------------------------------- checks
