@@ -26,19 +26,35 @@ public sealed partial class AspSetupClient(ILogger<AspSetupClient> log)
 
     public static string PageUrl(string host, string path) => $"http://{host}{path}";
 
+    /// <summary>
+    /// Reads one screen, following the redirect some of them open with.
+    ///
+    /// Network's Connection and Settings frames are stubs: an empty form and a
+    /// window.onload that sends the browser on to the page with the settings in it.
+    /// Read without following that, they are pages with nothing on them - which is
+    /// exactly how they looked.
+    /// </summary>
     public async Task<AspPage?> ReadAsync(string host, string path, CancellationToken ct)
     {
-        try
+        for (var hop = 0; hop < MaxRedirects; hop++)
         {
-            var html = await Http.GetStringAsync(PageUrl(host, path), ct);
-            return Parse(html);
+            var html = await GetAsync(host, path, ct);
+            if (html is null) return null;
+
+            var page = Parse(html);
+            if (page is not null && page.Rows.Count > 0) return page;
+
+            // Nothing on it: if it only points somewhere else, go there.
+            var onward = Redirect().Match(html);
+            if (!onward.Success) return page;
+
+            path = Resolve(path, onward.Groups["to"].Value.Trim());
         }
-        catch (Exception ex)
-        {
-            log.LogDebug("Setup page {Path} on {Host} failed: {Message}", path, host, ex.Message);
-            return null;
-        }
+
+        return null;
     }
+
+    private const int MaxRedirects = 3;
 
     /// <summary>True when this receiver serves the ASP setup tree at all.</summary>
     public async Task<bool> ProbeAsync(string host, CancellationToken ct)
@@ -53,6 +69,139 @@ public sealed partial class AspSetupClient(ILogger<AspSetupClient> log)
             log.LogDebug("No ASP setup tree on {Host}: {Message}", host, ex.Message);
             return false;
         }
+    }
+
+    // ---------------------------------------------------------------- menus
+
+    /// <summary>
+    /// The screens this receiver actually has, read from its own menus rather than
+    /// from a list kept here.
+    ///
+    /// A hand-written catalog was wrong within a day: it was built by guessing that a
+    /// content frame is always named d_*.asp, and Network's Connection and Settings
+    /// screens use r_network_setting_dhcp.asp, so they were silently absent. The
+    /// receiver knows what it has and says so, so ask it.
+    ///
+    ///   /SETUP/f_home.asp          frameset; its left frame lists the sections
+    ///   /SETUP/AUDIO/f_audio.asp   frameset; its right frame lists that menu
+    /// </summary>
+    public async Task<IReadOnlyList<AspGroup>> ReadMenusAsync(string host, CancellationToken ct)
+    {
+        var groups = new List<AspGroup>();
+
+        foreach (var root in AspCatalog.Roots)
+        {
+            var sections = root.Section is { } fixedName
+                ? [(fixedName, root.Path)]
+                : await SectionsAsync(host, root.Path, ct);
+
+            foreach (var (name, frameset) in sections)
+            {
+                if (ct.IsCancellationRequested) break;
+
+                // The section's own menu is the right-hand frame of its frameset.
+                var menu = await ContentFrameAsync(host, frameset, ct);
+                if (menu is null) continue;
+
+                foreach (var (label, path) in await LinksAsync(host, menu, ct))
+                    groups.Add(new AspGroup(name, label, path));
+            }
+        }
+
+        return groups;
+    }
+
+    private async Task<List<(string Name, string Path)>> SectionsAsync(
+        string host, string homePath, CancellationToken ct)
+    {
+        // The home frameset's LEFT frame is the one listing the sections.
+        var html = await GetAsync(host, homePath, ct);
+        if (html is null) return [];
+
+        var left = Frames(html).FirstOrDefault(f => f.Contains("d_left", StringComparison.OrdinalIgnoreCase));
+        if (left is null) return [];
+
+        var menu = Resolve(homePath, left);
+        return (await LinksAsync(host, menu, ct)).Select(l => (l.Label, l.Path)).ToList();
+    }
+
+    /// <summary>
+    /// The menu links, in the receiver's own order and words. Only links onward into
+    /// the tree count: Back goes up, and config Save and Load do something rather
+    /// than show something.
+    /// </summary>
+    private async Task<List<(string Label, string Path)>> LinksAsync(
+        string host, string menuPath, CancellationToken ct)
+    {
+        var html = await GetAsync(host, menuPath, ct);
+        if (html is null) return [];
+
+        var found = new List<(string, string)>();
+        foreach (Match link in Anchor().Matches(html))
+        {
+            var href = link.Groups["href"].Value.Trim();
+            var label = Label(link.Groups["text"].Value);
+
+            if (label.Length == 0 || href.Length == 0) continue;
+            if (!href.Contains("/f_", StringComparison.OrdinalIgnoreCase)) continue;
+            if (Unwanted().IsMatch(href)) continue;
+
+            var path = Resolve(menuPath, href);
+            if (found.All(f => f.Item2 != path)) found.Add((label, path));
+        }
+
+        return found;
+    }
+
+    /// <summary>
+    /// The frame holding a screen's controls. A frameset has a left frame for its
+    /// menu, the content frame, and a hidden third pointed at dummy.asp that the
+    /// form posts into - so the content is the one that is neither.
+    /// </summary>
+    public async Task<string?> ContentFrameAsync(string host, string framesetPath, CancellationToken ct)
+    {
+        var html = await GetAsync(host, framesetPath, ct);
+        if (html is null) return null;
+
+        var src = Frames(html).FirstOrDefault(f =>
+            !f.Contains("d_left", StringComparison.OrdinalIgnoreCase) &&
+            !f.Contains("dummy", StringComparison.OrdinalIgnoreCase));
+
+        return src is null ? null : Resolve(framesetPath, src);
+    }
+
+    private async Task<string?> GetAsync(string host, string path, CancellationToken ct)
+    {
+        try
+        {
+            return await Http.GetStringAsync(PageUrl(host, path), ct);
+        }
+        catch (Exception ex)
+        {
+            log.LogDebug("Setup page {Path} on {Host} failed: {Message}", path, host, ex.Message);
+            return null;
+        }
+    }
+
+    private static IEnumerable<string> Frames(string html) =>
+        Frame().Matches(html).Select(m => m.Groups["src"].Value.Trim()).Where(s => s.Length > 0);
+
+    /// <summary>Resolves a relative href against the page it was found on.</summary>
+    internal static string Resolve(string from, string href)
+    {
+        if (href.StartsWith('/')) return href;
+
+        var parts = new List<string>(from.Split('/', StringSplitOptions.RemoveEmptyEntries));
+        if (parts.Count > 0) parts.RemoveAt(parts.Count - 1);   // drop the file
+
+        foreach (var step in href.Split('/', StringSplitOptions.RemoveEmptyEntries))
+        {
+            if (step == ".") continue;
+            if (step == "..") { if (parts.Count > 0) parts.RemoveAt(parts.Count - 1); }
+            else parts.Add(step);
+        }
+
+        return "/" + string.Join('/', parts);
     }
 
     // ---------------------------------------------------------------- parsing
@@ -71,7 +220,7 @@ public sealed partial class AspSetupClient(ILogger<AspSetupClient> log)
         {
             Title = Label(Title().Match(html).Groups[1].Value),
             Help = Text(Help().Match(html).Groups[1].Value),
-            Action = form.Groups["action"].Value,
+            Action = ActionAttribute().Match(form.Groups["attrs"].Value).Groups["action"].Value,
         };
 
         // Two hidden fields guard every page: the receiver refuses to change anything
@@ -242,8 +391,13 @@ public sealed partial class AspSetupClient(ILogger<AspSetupClient> log)
         Regex.IsMatch(html, $@"name=['""]{Regex.Escape(name)}['""]\s+value=['""]ON['""]",
             RegexOptions.IgnoreCase);
 
-    [GeneratedRegex(@"<form[^>]*action=['""](?<action>[^'""]+)['""]", RegexOptions.IgnoreCase)]
+    // A form with no action posts to the page it is on, and the redirect stubs are
+    // written that way - requiring one made those pages parse as nothing at all.
+    [GeneratedRegex(@"<form\b(?<attrs>[^>]*)>", RegexOptions.IgnoreCase)]
     private static partial Regex FormTag();
+
+    [GeneratedRegex(@"action=['""](?<action>[^'""]+)['""]", RegexOptions.IgnoreCase)]
+    private static partial Regex ActionAttribute();
 
     [GeneratedRegex(@"<div class=[""']Title[""']>(.*?)</div>", RegexOptions.IgnoreCase | RegexOptions.Singleline)]
     private static partial Regex Title();
@@ -279,6 +433,20 @@ public sealed partial class AspSetupClient(ILogger<AspSetupClient> log)
 
     [GeneratedRegex(@"(<table\b[^>]*>)(\s*)(?=<td\b)", RegexOptions.IgnoreCase)]
     private static partial Regex TableThenCell();
+
+    [GeneratedRegex(@"location\.href\s*=\s*['""](?<to>[^'""]+)['""]", RegexOptions.IgnoreCase)]
+    private static partial Regex Redirect();
+
+    [GeneratedRegex(@"<frame\b[^>]*src=['""](?<src>[^'""]+)['""]", RegexOptions.IgnoreCase)]
+    private static partial Regex Frame();
+
+    [GeneratedRegex(@"<a\b[^>]*href=['""](?<href>[^'""]+)['""][^>]*>(?<text>.*?)</a>",
+        RegexOptions.IgnoreCase | RegexOptions.Singleline)]
+    private static partial Regex Anchor();
+
+    /// <summary>Config save and load act rather than show; index.asp goes back out.</summary>
+    [GeneratedRegex(@"/(SAVE|LOAD|RESTORE|INITIALIZE|UPDATE|FIRMWARE)/|index\.asp", RegexOptions.IgnoreCase)]
+    private static partial Regex Unwanted();
 
     [GeneratedRegex(@"<[^>]+>")]
     private static partial Regex Tags();
