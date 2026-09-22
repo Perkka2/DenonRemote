@@ -454,6 +454,14 @@ html, body {
 .track-text span { color: var(--dim); font-size: 14px; }
 .track-text .dimmer { font-size: 13px; opacity: .7; }
 
+/* The pre-HEOS player mirrors the receiver's screen, so lines are rows of equal
+   weight and the cursor line is the one that stands out. */
+.screen-line { font-size: 15px !important; color: var(--text, #e8edf3) !important; }
+.screen-line.here {
+    color: var(--accent, #4b8dd6) !important;
+    font-weight: 600;
+}
+
 .transport { display: flex; gap: 8px; justify-content: center; }
 .step.wide { width: 86px; }
 

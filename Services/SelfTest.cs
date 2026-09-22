@@ -29,6 +29,7 @@ public static class SelfTest
         LabelTable();
         SetupUiCrawl();
         LegacySourceTable();
+        NetworkPlayer();
 
         Console.WriteLine();
         Console.WriteLine($"  {_passed} passed, {Failures.Count} failed");
@@ -156,6 +157,69 @@ public static class SelfTest
         Check("a short rename list is survivable", short_.Count == 2);
         Check("an unnamed input falls back to the catalog",
             short_.Any(s => s.Code == "TUNER" && s.Label.Length > 0));
+    }
+
+    /// <summary>
+    /// The pre-HEOS network player. This is the document the receiver was actually
+    /// serving when it was captured, Spotify playing.
+    /// </summary>
+    private static void NetworkPlayer()
+    {
+        var playing = XDocument.Parse("""
+            <item>
+              <chFlag><value>0</value><value>0</value><value>1</value><value>0</value></chFlag>
+              <szLine>
+                <value>Now Playing</value>
+                <value>Out In The Night</value>
+                <value>Arvid Nero</value>
+                <value></value>
+                <value>Little White Dove</value>
+                <value></value><value></value><value></value><value></value><value></value>
+              </szLine>
+              <NetPlayingTitle><value>Spotify</value></NetPlayingTitle>
+              <Art><value>2</value></Art>
+              <NetAudioRandom><value>OFF</value></NetAudioRandom>
+              <NetAudioRepeat><value>ON</value></NetAudioRepeat>
+              <InputFuncSelect><value>Online Music</value></InputFuncSelect>
+            </item>
+            """);
+
+        var state = NetAudioClient.Parse(playing)!;
+
+        Check("the screen's heading is read", state.Heading == "Now Playing");
+        Check("the service is read", state.Service == "Spotify");
+        Check("the input is read", state.Input == "Online Music");
+        Check("art is offered", state.HasArt);
+        Check("repeat is read", state.Repeat);
+        Check("shuffle is read", !state.Shuffle);
+
+        // Ten slots, five used: the blank tail would otherwise draw as empty rows.
+        Check("the blank tail is dropped", state.Lines.Count == 5);
+        // ...but a blank between two used lines is part of the screen's shape.
+        Check("a gap inside the screen is kept", state.Lines[3] == "");
+        Check("the body skips blanks",
+            state.Body.SequenceEqual(new[] { "Out In The Night", "Arvid Nero", "Little White Dove" }));
+        Check("the cursor line is marked", state.LineFlags[2] == 1);
+        Check("other lines are not", state.LineFlags[1] == 0);
+
+        // An idle player says so with an empty buffer rather than by not answering.
+        var idle = NetAudioClient.Parse(XDocument.Parse("""
+            <item><szLine><value></value><value></value></szLine><Art><value>0</value></Art></item>
+            """))!;
+        Check("an empty screen is idle", idle.Idle);
+        Check("no art is offered when there is none", !idle.HasArt);
+
+        // The command the UI itself sends, field for field.
+        var body = NetAudioClient.Body("CurDown");
+        Check("a command names the player", body["cmd0"] == "PutNetAudioCommand/CurDown");
+        Check("a command asks for a fresh status", body["cmd1"] == "aspMainZone_WebUpdateStatus/");
+        Check("a command carries the zone", body["ZoneName"] == "MAIN ZONE");
+
+        Check("the status document is where the UI reads it",
+            NetAudioClient.StatusUrl("10.0.1.197")
+                == "http://10.0.1.197/goform/formNetAudio_StatusXml.xml");
+        Check("commands go where the UI posts them",
+            NetAudioClient.CommandUrl("10.0.1.197") == "http://10.0.1.197/NetAudio/index.put.asp");
     }
 
     // ---------------------------------------------------------------- checks

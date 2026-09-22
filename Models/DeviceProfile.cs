@@ -25,6 +25,12 @@ public sealed class DeviceProfile
     /// <summary>True when the setup API answered, which is how the newer firmware talks.</summary>
     public bool SetupApi { get; set; }
 
+    /// <summary>
+    /// True when the pre-HEOS network player answered. On those units it is the only
+    /// account of what is playing, HEOS being absent.
+    /// </summary>
+    public bool NetAudio { get; set; }
+
     public string ZoneName(int zone) =>
         ZoneNames.TryGetValue(zone, out var name) && name.Length > 0
             ? name
