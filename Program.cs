@@ -35,12 +35,15 @@ if (options.ReadUi is { } uiDir)
 
         var types = AjaxUiReader.Types(await File.ReadAllTextAsync(iface));
         var menu = AjaxUiReader.Menu(await File.ReadAllTextAsync(settings));
-        Console.WriteLine($"=== {path}: {types.Count} types, {menu.Count} in the menu");
-        foreach (var (constant, key) in menu)
-        {
-            if (!types.TryGetValue(constant, out var type)) continue;
-            Console.WriteLine($"    {type,3}  {(words.TryGetValue(key, out var w) ? w : "?")}");
-        }
+        var byName = words.Values
+            .Where(v => AjaxUiReader.Normalise(v).Length > 0)
+            .GroupBy(AjaxUiReader.Normalise)
+            .Where(g => g.Distinct(StringComparer.Ordinal).Count() == 1)
+            .ToDictionary(g => g.Key, g => g.First(), StringComparer.Ordinal);
+
+        Console.WriteLine($"=== {path}: {types.Count} settings");
+        foreach (var constant in AjaxUiReader.Order(types.Keys, menu))
+            Console.WriteLine($"    {types[constant],3}  {AjaxUiReader.Name(constant, byName)}");
         Console.WriteLine();
     }
     return 0;
