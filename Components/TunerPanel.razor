@@ -1,0 +1,41 @@
+@* Shown only while the tuner is the selected input. *@
+
+<section class="panel">
+    <div class="quick-head">
+        <h2>Tuner</h2>
+        <span class="now">@Frequency</span>
+    </div>
+
+    <div class="row-slider">
+        <button class="step" disabled="@Disabled" @onclick="() => Client.StepFrequency(-1)">&minus;</button>
+        <span class="tuner-preset">@(Client.State.System.TunerPreset is { } p ? $"Preset {p}" : "Manual")</span>
+        <button class="step" disabled="@Disabled" @onclick="() => Client.StepFrequency(1)">+</button>
+    </div>
+
+    <div class="grid">
+        @for (var slot = 1; slot <= 8; slot++)
+        {
+            var current = slot;
+            <button class="tile @(Client.State.System.TunerPreset == current ? "active" : "")"
+                    disabled="@Disabled"
+                    @onclick="() => Client.TunePreset(current)">
+                @current
+            </button>
+        }
+    </div>
+
+    <div class="pad-extra">
+        <button class="ghost" disabled="@Disabled" @onclick="() => Client.StepPreset(-1)">Previous preset</button>
+        <button class="ghost" disabled="@Disabled" @onclick="() => Client.StepPreset(1)">Next preset</button>
+    </div>
+</section>
+
+@code {
+    [Parameter, EditorRequired] public DenonClient Client { get; set; } = default!;
+
+    private bool Disabled => !Client.State.Online || Client.State.Main.Power != true;
+
+    private string Frequency => Client.State.System.TunerFrequency is { } mhz
+        ? mhz.ToString("0.00", CultureInfo.InvariantCulture) + " MHz"
+        : "—";
+}

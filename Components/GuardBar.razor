@@ -1,0 +1,43 @@
+@* Sleep timer and night mode. *@
+
+<section class="panel tight">
+    <div class="quick-head">
+        <h2>Sleep</h2>
+        <button class="pill @(Client.NightMode ? "active" : "")"
+                disabled="@Disabled"
+                @onclick="() => Client.SetNightMode(!Client.NightMode)">
+            Night mode
+        </button>
+    </div>
+
+    <div class="quick-row">
+        @foreach (var minutes in new[] { 15, 30, 60, 90 })
+        {
+            var current = minutes;
+            <button class="tile @(Client.State.SleepMinutes == current ? "active" : "")"
+                    disabled="@Disabled"
+                    @onclick="() => Client.SetSleep(current)">
+                @current m
+            </button>
+        }
+        <button class="tile @(Client.State.SleepMinutes is null ? "active" : "")"
+                disabled="@Disabled"
+                @onclick="() => Client.SetSleep(null)">
+            Off
+        </button>
+    </div>
+
+    @if (Client.NightMode)
+    {
+        <p class="muted-text">
+            Volume capped at @Client.Config.Settings.NightMaxVolume.ToString("0.#", CultureInfo.InvariantCulture)
+            with Dynamic Volume @DenonCatalog.LabelFor(DenonCatalog.DynamicVolumes, Client.Config.Settings.NightDynamicVolume).
+        </p>
+    }
+</section>
+
+@code {
+    [Parameter, EditorRequired] public DenonClient Client { get; set; } = default!;
+
+    private bool Disabled => !Client.State.Online;
+}

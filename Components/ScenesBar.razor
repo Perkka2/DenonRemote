@@ -1,0 +1,64 @@
+@* App-side scenes: one tap sets input, volume, sound mode and the other zones
+   together - something the receiver's own Quick Selects can't do across zones. *@
+@implements IDisposable
+@inject SceneStore Scenes
+
+<section class="panel tight">
+    <div class="quick-head">
+        <h2>Scenes</h2>
+        <button class="pill" disabled="@Disabled" @onclick="() => capturing = !capturing">
+            @(capturing ? "Cancel" : "Save current")
+        </button>
+    </div>
+
+    @if (capturing)
+    {
+        <div class="addrow">
+            <input class="text" placeholder="Movie night" @bind="name" @bind:event="oninput" />
+            <button class="primary" disabled="@(string.IsNullOrWhiteSpace(name))" @onclick="Capture">Save</button>
+        </div>
+    }
+
+    @if (Mine.Count == 0)
+    {
+        <p class="muted-text">No scenes yet — set the receiver how you like it, then save it.</p>
+    }
+    else
+    {
+        <div class="grid">
+            @foreach (var scene in Mine)
+            {
+                var current = scene;
+                <div class="scene">
+                    <button class="tile" disabled="@Disabled" @onclick="() => Client.RunScene(current)">
+                        @current.Name
+                    </button>
+                    <button class="x" title="Delete scene" @onclick="() => Scenes.Remove(current.Id)">&times;</button>
+                </div>
+            }
+        </div>
+    }
+</section>
+
+@code {
+    [Parameter, EditorRequired] public DenonClient Client { get; set; } = default!;
+
+    private bool capturing;
+    private string name = "";
+
+    private IReadOnlyList<Scene> Mine => Scenes.For(Client.Config.Id);
+    private bool Disabled => !Client.State.Online;
+
+    protected override void OnInitialized() => Scenes.Changed += OnChanged;
+
+    private void OnChanged() => InvokeAsync(StateHasChanged);
+
+    private void Capture()
+    {
+        Scenes.Add(Client.CaptureScene(name.Trim()));
+        name = "";
+        capturing = false;
+    }
+
+    public void Dispose() => Scenes.Changed -= OnChanged;
+}

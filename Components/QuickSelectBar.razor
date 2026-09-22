@@ -1,0 +1,44 @@
+@* The receiver's own Quick Select slots, and saving the current setup into one. *@
+
+<section class="panel tight">
+    <div class="quick-head">
+        <h2>Quick Select</h2>
+        <button class="pill @(saving ? "active" : "")" disabled="@Disabled" @onclick="() => saving = !saving">
+            @(saving ? "Tap a slot to save" : "Save to…")
+        </button>
+    </div>
+
+    <div class="quick-row">
+        @for (var slot = 1; slot <= 4; slot++)
+        {
+            var current = slot;
+            <button class="tile @(Client.State.QuickSelect == current && !saving ? "active" : "")"
+                    disabled="@Disabled"
+                    @onclick="() => Use(current)">
+                @Client.Profile.QuickSelectName(current)
+            </button>
+        }
+    </div>
+</section>
+
+@code {
+    [Parameter, EditorRequired] public DenonClient Client { get; set; } = default!;
+    [Parameter] public int Zone { get; set; } = 1;
+
+    private bool saving;
+
+    private bool Disabled => !Client.State.Online || Client.State.Zone(Zone).Power != true;
+
+    private void Use(int slot)
+    {
+        if (saving)
+        {
+            Client.SaveQuick(slot, Zone);
+            saving = false;
+        }
+        else
+        {
+            Client.SelectQuick(slot, Zone);
+        }
+    }
+}

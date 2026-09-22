@@ -1,0 +1,19 @@
+# Build output
+bin/
+obj/
+
+# Self-contained publishes made by publish.sh
+dist/
+
+# Editor and OS
+.vs/
+.vscode/
+*.user
+*.suo
+.DS_Store
+
+# Captured receiver payloads and setup UIs. Kept locally as the reference the
+# label tables were derived from, but not published: they are large, they are
+# the receivers' own copyrighted UI code, and they record one household's
+# configuration.
+discovery/

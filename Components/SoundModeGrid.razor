@@ -1,0 +1,30 @@
+@* Surround / sound mode selection (main zone only). *@
+
+<section class="grid-block">
+    <h2>Sound mode <span class="current">@DenonCatalog.LabelForMode(Client.State.SoundMode)</span></h2>
+    <div class="grid">
+        @foreach (var mode in DenonCatalog.SoundModes)
+        {
+            <button class="tile @(IsActive(mode.Code) ? "active" : "")"
+                    disabled="@(!Enabled)"
+                    @onclick="() => Client.SetSoundMode(mode.Code)">
+                @mode.Label
+            </button>
+        }
+    </div>
+</section>
+
+@code {
+    [Parameter, EditorRequired] public DenonClient Client { get; set; } = default!;
+
+    private bool Enabled => Client.State.Online && Client.State.Main.Power == true;
+
+    // The receiver answers with the mode it actually landed on, which is often more
+    // specific than what we asked for ("DOLBY DIGITAL+" for "DOLBY DIGITAL").
+    private bool IsActive(string code)
+    {
+        var current = Client.State.SoundMode;
+        return !string.IsNullOrEmpty(current) &&
+               current.StartsWith(code, StringComparison.OrdinalIgnoreCase);
+    }
+}

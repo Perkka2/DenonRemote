@@ -1,0 +1,72 @@
+@* What the receiver is actually handling right now. None of this is in the
+   control protocol - it comes from the setup API's Information document. *@
+@implements IDisposable
+
+<section class="panel">
+    <div class="quick-head">
+        <h2>Signal</h2>
+        <button class="pill" @onclick="() => Client.RefreshInfoAsync()">Refresh</button>
+    </div>
+
+    @if (Info.LastRead is null)
+    {
+        <p class="muted-text">Nothing read yet.</p>
+    }
+    else
+    {
+        <div class="facts">
+            <Fact Label="Sound mode" Value="@Info.SoundMode" />
+            <Fact Label="Input signal" Value="@Info.InputSignal" />
+            <Fact Label="Format" Value="@Info.Format" />
+            <Fact Label="Source" Value="@Info.MainSource" />
+        </div>
+    }
+</section>
+
+<section class="panel">
+    <h2>Video</h2>
+    <div class="facts">
+        <Fact Label="Resolution" Value="@Info.Resolution" />
+        <Fact Label="HDR" Value="@Info.Hdr" />
+        <Fact Label="Colour space" Value="@Info.ColorSpace" />
+        <Fact Label="Pixel depth" Value="@Info.PixelDepth" />
+        <Fact Label="Display" Value="@Info.MonitorInterface" />
+        <Fact Label="Display HDR" Value="@Info.MonitorHdr" />
+    </div>
+
+    @if (Info.MonitorResolutions.Count > 0)
+    {
+        <p class="muted-text">Display accepts: @string.Join(", ", Info.MonitorResolutions)</p>
+    }
+</section>
+
+<section class="panel">
+    <h2>Receiver</h2>
+    <div class="facts">
+        <Fact Label="Model" Value="@(string.IsNullOrWhiteSpace(Client.Profile.Model) ? null : Client.Profile.Model)" />
+        <Fact Label="Firmware" Value="@Info.FirmwareVersion" />
+        <Fact Label="DTS" Value="@Info.DtsVersion" />
+        <Fact Label="Zone 2" Value="@Zone2" />
+    </div>
+</section>
+
+@code {
+    [Parameter, EditorRequired] public DenonClient Client { get; set; } = default!;
+
+    private Timer? poll;
+
+    private ReceiverInfo Info => Client.Info;
+
+    private string? Zone2 => Info.Zone2Source is null
+        ? null
+        : $"{Info.Zone2Source}{(Info.Zone2Volume is null ? "" : $" · {Info.Zone2Volume}")}";
+
+    protected override void OnInitialized()
+    {
+        // The signal changes when the source does, and nothing pushes that to us.
+        poll = new Timer(_ => _ = Client.RefreshInfoAsync(), null,
+            TimeSpan.Zero, TimeSpan.FromSeconds(5));
+    }
+
+    public void Dispose() => poll?.Dispose();
+}

@@ -1,0 +1,95 @@
+@* The nine-band graphic EQ. Not part of the control protocol - see GraphicEqClient
+   for where each generation's mechanism came from. *@
+
+<section class="panel">
+    <div class="quick-head">
+        <h2>Graphic EQ</h2>
+        <div class="toggle-row">
+            <button class="pill @(Eq.Enabled == true ? "active" : "")"
+                    disabled="@busy"
+                    @onclick="ToggleAsync">
+                @(Eq.Enabled == true ? "On" : "Off")
+            </button>
+            <button class="pill" disabled="@busy" @onclick="() => Client.RefreshEqAsync()">Reload</button>
+        </div>
+    </div>
+
+    @if (!string.IsNullOrEmpty(Eq.Note))
+    {
+        <p class="muted-text">@Eq.Note</p>
+    }
+
+    @if (Eq.SpeakerSelections.Count > 0)
+    {
+        <OptionRow Label="Speakers" Options="Eq.SpeakerSelections.ToArray()"
+                   Current="@Eq.SpeakerSelection" Disabled="@busy"
+                   Selected="value => Client.SetEqSpeakerSelectionAsync(value)" />
+    }
+
+    @if (Eq.Channels.Count > 0)
+    {
+        <OptionRow Label="Channel" Options="Eq.Channels.ToArray()"
+                   Current="@Eq.Channel" Disabled="@busy"
+                   Selected="value => Client.SetEqChannelAsync(value)" />
+    }
+
+    @if (Eq.Bands.Count == 0)
+    {
+        <p class="muted-text">
+            No band values reported. @(Eq.Enabled == true ? "" : "Switch the EQ on first.")
+        </p>
+    }
+    else
+    {
+        @foreach (var band in GraphicEq.Bands)
+        {
+            var current = band;
+            <div class="level">
+                <span class="level-label">@current.Label</span>
+                <input class="slider small"
+                       type="range"
+                       min="@Eq.Min.ToString(CultureInfo.InvariantCulture)"
+                       max="@Eq.Max.ToString(CultureInfo.InvariantCulture)"
+                       step="@Eq.Step.ToString(CultureInfo.InvariantCulture)"
+                       value="@Value(current.Key).ToString(CultureInfo.InvariantCulture)"
+                       disabled="@(busy || Eq.Enabled != true)"
+                       @oninput="args => OnBandAsync(current.Key, args)" />
+                <span class="level-value">@Display(current.Key)</span>
+            </div>
+        }
+
+        <div class="pad-extra">
+            <button class="ghost" disabled="@busy" @onclick="() => Client.ResetEqAsync()">Set defaults</button>
+        </div>
+    }
+</section>
+
+@code {
+    [Parameter, EditorRequired] public DenonClient Client { get; set; } = default!;
+
+    private bool busy;
+
+    private GraphicEqState Eq => Client.Eq;
+
+    private double Value(string key) => Eq.Bands.TryGetValue(key, out var dB) ? dB : 0;
+
+    private string Display(string key) =>
+        Eq.Bands.TryGetValue(key, out var dB)
+            ? (dB > 0 ? "+" : "") + dB.ToString("0.#", CultureInfo.InvariantCulture)
+            : "—";
+
+    private async Task ToggleAsync()
+    {
+        busy = true;
+        try { await Client.SetEqEnabledAsync(Eq.Enabled != true); }
+        finally { busy = false; }
+    }
+
+    private async Task OnBandAsync(string key, ChangeEventArgs args)
+    {
+        if (!double.TryParse(args.Value?.ToString(), NumberStyles.Float, CultureInfo.InvariantCulture, out var dB))
+            return;
+
+        await Client.SetEqBandAsync(key, dB);
+    }
+}

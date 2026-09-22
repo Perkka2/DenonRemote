@@ -1,0 +1,212 @@
+@page "/setup"
+@implements IDisposable
+@inject DenonRegistry Registry
+@inject SsdpDiscovery Discovery
+
+<div class="head">
+    <h1>Receivers</h1>
+    <a class="gear" href="console">Console</a>
+    <a class="gear" href="">Back</a>
+</div>
+
+<section class="panel list">
+    @if (Registry.Clients.Count == 0)
+    {
+        <p class="muted-text">None configured.</p>
+    }
+    else
+    {
+        @foreach (var candidate in Registry.Clients)
+        {
+            var current = candidate;
+            <div class="listrow">
+                <span class="dot @(current.State.Online ? "up" : "down")"></span>
+                <div class="who">
+                    <strong>@current.Config.Name</strong>
+                    <span>@Describe(current)</span>
+                </div>
+                <button class="ghost" @onclick="() => Toggle(current.Config.Id)">
+                    @(expanded == current.Config.Id ? "Close" : "Settings")
+                </button>
+                <button class="ghost" @onclick="() => Registry.Remove(current.Config.Id)">Remove</button>
+            </div>
+
+            @if (expanded == current.Config.Id)
+            {
+                <div class="settings">
+                    <div class="setting">
+                        <span>Max volume</span>
+                        <input class="text narrow" type="number" min="20" max="98" step="1"
+                               value="@current.Config.Settings.MaxVolume.ToString("0", CultureInfo.InvariantCulture)"
+                               @onchange="args => SetMax(current, args)" />
+                        <span class="muted-text">@Db(current.Config.Settings.MaxVolume)</span>
+                    </div>
+
+                    <div class="setting">
+                        <span>Confirm above</span>
+                        <input class="text narrow" type="number" min="0" max="98" step="1"
+                               value="@(current.Config.Settings.ConfirmAbove?.ToString("0", CultureInfo.InvariantCulture) ?? "")"
+                               @onchange="args => SetConfirm(current, args)" />
+                        <span class="muted-text">blank to never ask</span>
+                    </div>
+
+                    <div class="setting">
+                        <span>Night cap</span>
+                        <input class="text narrow" type="number" min="20" max="98" step="1"
+                               value="@current.Config.Settings.NightMaxVolume.ToString("0", CultureInfo.InvariantCulture)"
+                               @onchange="args => SetNightMax(current, args)" />
+                        <span class="muted-text">@Db(current.Config.Settings.NightMaxVolume)</span>
+                    </div>
+                </div>
+            }
+        }
+    }
+</section>
+
+<section class="panel">
+    <h2>Find on the network</h2>
+    <button class="primary" disabled="@searching" @onclick="ScanAsync">
+        @(searching ? "Searching…" : "Scan for receivers")
+    </button>
+
+    @if (found.Count > 0)
+    {
+        <div class="listrow-group">
+            @foreach (var candidate in found)
+            {
+                var current = candidate;
+                <div class="listrow">
+                    <div class="who">
+                        <strong>@current.Name</strong>
+                        <span>@current.Host · @current.Model</span>
+                    </div>
+                    <button class="ghost" disabled="@(Known(current.Host))" @onclick="() => AddFound(current)">
+                        @(Known(current.Host) ? "Added" : "Add")
+                    </button>
+                </div>
+            }
+        </div>
+    }
+    else if (scanned && !searching)
+    {
+        <p class="muted-text">Nothing found. Some networks block SSDP — add the address below instead.</p>
+    }
+</section>
+
+<section class="panel">
+    <h2>Add by address</h2>
+    <div class="addrow">
+        <input class="text" placeholder="192.168.1.50" @bind="manualHost" @bind:event="oninput" />
+        <button class="primary" disabled="@(string.IsNullOrWhiteSpace(manualHost) || checking)" @onclick="AddManualAsync">
+            @(checking ? "Checking…" : "Add")
+        </button>
+    </div>
+    @if (!string.IsNullOrEmpty(message))
+    {
+        <p class="muted-text">@message</p>
+    }
+</section>
+
+@code {
+    private List<DiscoveredDevice> found = [];
+    private bool searching;
+    private bool scanned;
+    private bool checking;
+    private string manualHost = "";
+    private string message = "";
+    private string? expanded;
+
+    protected override void OnInitialized() => Registry.Changed += OnChanged;
+
+    private void OnChanged() => InvokeAsync(StateHasChanged);
+
+    private void Toggle(string id) => expanded = expanded == id ? null : id;
+
+    private static string Describe(DenonClient client)
+    {
+        var parts = new List<string> { client.Config.Host };
+        if (!string.IsNullOrWhiteSpace(client.Profile.Model)) parts.Add(client.Profile.Model);
+        parts.Add(client.Zones.Count == 1 ? "1 zone" : $"{client.Zones.Count} zones");
+        if (client.Profile.Heos) parts.Add("HEOS");
+        if (client.Profile.SourcesFromDevice) parts.Add("named inputs");
+        return string.Join(" · ", parts);
+    }
+
+    private static string Db(double scale) =>
+        (scale - 80).ToString("0", CultureInfo.InvariantCulture) + " dB";
+
+    private void SetMax(DenonClient client, ChangeEventArgs args)
+    {
+        if (double.TryParse(args.Value?.ToString(), NumberStyles.Float, CultureInfo.InvariantCulture, out var value))
+        {
+            client.Config.Settings.MaxVolume = Math.Clamp(value, 20, 98);
+            Registry.SaveSettings();
+        }
+    }
+
+    private void SetConfirm(DenonClient client, ChangeEventArgs args)
+    {
+        var text = args.Value?.ToString();
+        client.Config.Settings.ConfirmAbove =
+            double.TryParse(text, NumberStyles.Float, CultureInfo.InvariantCulture, out var value)
+                ? Math.Clamp(value, 0, 98)
+                : null;
+        Registry.SaveSettings();
+    }
+
+    private void SetNightMax(DenonClient client, ChangeEventArgs args)
+    {
+        if (double.TryParse(args.Value?.ToString(), NumberStyles.Float, CultureInfo.InvariantCulture, out var value))
+        {
+            client.Config.Settings.NightMaxVolume = Math.Clamp(value, 20, 98);
+            Registry.SaveSettings();
+        }
+    }
+
+    private bool Known(string host) =>
+        Registry.Clients.Any(c => string.Equals(c.Config.Host, host, StringComparison.OrdinalIgnoreCase));
+
+    private async Task ScanAsync()
+    {
+        searching = true;
+        message = "";
+        try
+        {
+            var results = await Discovery.SearchAsync(TimeSpan.FromSeconds(4), CancellationToken.None);
+            found = results.ToList();
+        }
+        finally
+        {
+            searching = false;
+            scanned = true;
+        }
+    }
+
+    private void AddFound(DiscoveredDevice device) =>
+        Registry.Add(new ReceiverConfig { Host = device.Host, Name = device.Name, Model = device.Model });
+
+    private async Task AddManualAsync()
+    {
+        var host = manualHost.Trim();
+        checking = true;
+        message = "";
+        try
+        {
+            var device = await Discovery.ProbeAsync(host, CancellationToken.None);
+            Registry.Add(device is null
+                ? new ReceiverConfig { Host = host, Name = host }
+                : new ReceiverConfig { Host = device.Host, Name = device.Name, Model = device.Model });
+
+            message = device is null
+                ? $"Added {host}. It did not answer the description request, so the name is just the address."
+                : $"Added {device.Name}.";
+            manualHost = "";
+        }
+        finally
+        {
+            checking = false;
+        }
+    }
+
+    public void Dispose() => Registry.Changed -= OnChanged;
+}

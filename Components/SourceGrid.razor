@@ -1,0 +1,32 @@
+@* Input selection. Names come from the receiver itself when it answers. *@
+
+<section class="grid-block">
+    <h2>
+        Input
+        @if (!Client.Profile.SourcesFromDevice)
+        {
+            <span class="hint">default names</span>
+        }
+    </h2>
+    <div class="grid">
+        @foreach (var source in Client.SourcesFor(Zone))
+        {
+            var current = source;
+            <button class="tile @(IsActive(current.Code) ? "active" : "")"
+                    disabled="@Disabled"
+                    @onclick="() => Client.SetZoneSource(Zone, current.Code)">
+                @current.Label
+            </button>
+        }
+    </div>
+</section>
+
+@code {
+    [Parameter, EditorRequired] public DenonClient Client { get; set; } = default!;
+    [Parameter] public int Zone { get; set; } = 1;
+
+    private bool Disabled => !Client.State.Online || Client.State.Zone(Zone).Power != true;
+
+    private bool IsActive(string code) =>
+        string.Equals(Client.State.Zone(Zone).Source, code, StringComparison.OrdinalIgnoreCase);
+}

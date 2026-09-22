@@ -1,0 +1,59 @@
+@* Renders one surround parameter according to its spec. *@
+
+@if (Spec.Kind == ParameterKind.Level)
+{
+    <div class="level">
+        <span class="level-label" title="@Spec.Note">@Spec.Label</span>
+        <input class="slider small"
+               type="range"
+               min="@Spec.Min.ToString(CultureInfo.InvariantCulture)"
+               max="@Spec.Max.ToString(CultureInfo.InvariantCulture)"
+               step="@Spec.Step.ToString(CultureInfo.InvariantCulture)"
+               value="@Numeric.ToString(CultureInfo.InvariantCulture)"
+               disabled="@Disabled"
+               @oninput="OnSlide" />
+        <span class="level-value">@Display</span>
+    </div>
+}
+else
+{
+    <OptionRow Label="@Spec.Label"
+               Options="Spec.Options ?? []"
+               Current="@Current"
+               Disabled="@Disabled"
+               Selected="value => Client.SetParameter(Spec, value)" />
+}
+
+@code {
+    [Parameter, EditorRequired] public DenonClient Client { get; set; } = default!;
+    [Parameter, EditorRequired] public ParameterSpec Spec { get; set; } = default!;
+    [Parameter] public bool Disabled { get; set; }
+
+    private string? Current => Client.Parameter(Spec.Key);
+
+    private double Numeric =>
+        double.TryParse(Current, NumberStyles.Float, CultureInfo.InvariantCulture, out var value)
+            ? value
+            : Spec.Min;
+
+    private string Display
+    {
+        get
+        {
+            if (Current is null) return "—";
+            var number = Numeric.ToString("0.#", CultureInfo.InvariantCulture);
+            return Spec.Unit switch
+            {
+                "-dB" => "-" + number + " dB",
+                null => number,
+                _ => number + " " + Spec.Unit,
+            };
+        }
+    }
+
+    private void OnSlide(ChangeEventArgs args)
+    {
+        if (double.TryParse(args.Value?.ToString(), NumberStyles.Float, CultureInfo.InvariantCulture, out var value))
+            Client.SetParameterLevel(Spec, value);
+    }
+}

@@ -1,0 +1,103 @@
+@* Power, volume and mute for one zone, with the guardrails applied. *@
+
+<section class="panel">
+    <div class="row-top">
+        <button class="power @(PowerOn ? "on" : "")"
+                disabled="@(!Client.State.Online)"
+                @onclick="TogglePower">
+            <span class="glyph">&#9211;</span>
+            <span class="label">@(PowerOn ? "On" : "Off")</span>
+        </button>
+
+        <div class="readout @(Muted ? "muted" : "")">
+            <div class="db">@FormatDb()</div>
+            <div class="sub">@FormatScale()</div>
+        </div>
+
+        <button class="mute @(Muted ? "on" : "")"
+                disabled="@(!Enabled)"
+                @onclick="ToggleMute">
+            <span class="glyph">@(Muted ? "×" : "●")</span>
+            <span class="label">@(Muted ? "Muted" : "Mute")</span>
+        </button>
+    </div>
+
+    <div class="row-slider">
+        <button class="step" disabled="@(!Enabled)" @onclick="() => Client.StepZoneVolume(Zone, -1)">&minus;</button>
+
+        <input class="slider"
+               type="range"
+               min="0"
+               max="@Max.ToString(CultureInfo.InvariantCulture)"
+               step="0.5"
+               value="@(Volume?.ToString(CultureInfo.InvariantCulture) ?? "0")"
+               disabled="@(!Enabled)"
+               @oninput="OnSlide" />
+
+        <button class="step" disabled="@(!Enabled)" @onclick="() => Client.StepZoneVolume(Zone, 1)">+</button>
+    </div>
+
+    @if (pending is not null)
+    {
+        <div class="confirm">
+            Jump to @((pending.Value - 80).ToString("0.#", CultureInfo.InvariantCulture)) dB?
+            <button class="primary small" @onclick="ApplyPending">Yes</button>
+            <button class="ghost small" @onclick="() => pending = null">No</button>
+        </div>
+    }
+</section>
+
+@code {
+    [Parameter, EditorRequired] public DenonClient Client { get; set; } = default!;
+    [Parameter] public int Zone { get; set; } = 1;
+
+    private double? pending;
+
+    private ZoneState State => Client.State.Zone(Zone);
+    private bool PowerOn => State.Power == true;
+    private bool Muted => State.Mute == true;
+    private bool Enabled => Client.State.Online && PowerOn;
+    private double? Volume => State.Volume;
+    private double Max => Math.Clamp(Client.EffectiveMax, 40, 98);
+
+    private void TogglePower() => Client.SetZonePower(Zone, !PowerOn);
+
+    private void ToggleMute() => Client.SetZoneMute(Zone, !Muted);
+
+    private void OnSlide(ChangeEventArgs args)
+    {
+        if (!double.TryParse(args.Value?.ToString(), NumberStyles.Float, CultureInfo.InvariantCulture, out var value))
+            return;
+
+        // A drag that crosses the confirm threshold waits for a yes; small moves
+        // and anything below the threshold go straight through.
+        var threshold = Client.Config.Settings.ConfirmAbove;
+        if (threshold is not null && value > threshold && (Volume ?? 0) <= threshold)
+        {
+            pending = value;
+            return;
+        }
+
+        pending = null;
+        Client.SetZoneVolume(Zone, value);
+    }
+
+    private void ApplyPending()
+    {
+        if (pending is { } value) Client.SetZoneVolume(Zone, value);
+        pending = null;
+    }
+
+    // The receiver's own scale runs 0..98; the number printed on the front panel
+    // is that value minus 80 dB.
+    private string FormatDb() =>
+        Volume is null ? "—" : (Volume.Value - 80).ToString("0.0", CultureInfo.InvariantCulture) + " dB";
+
+    private string FormatScale()
+    {
+        if (Volume is null) return "no reading";
+        var scale = "scale " + Volume.Value.ToString("0.#", CultureInfo.InvariantCulture);
+        return Client.NightMode ? scale + " · night cap" : scale + " · cap " +
+            Client.EffectiveMax.ToString("0.#", CultureInfo.InvariantCulture);
+    }
+}

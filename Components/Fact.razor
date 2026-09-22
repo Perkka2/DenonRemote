@@ -1,0 +1,14 @@
+@* One label/value line, hidden when the receiver reported nothing. *@
+
+@if (!string.IsNullOrWhiteSpace(Value))
+{
+    <div class="fact">
+        <span class="fact-label">@Label</span>
+        <span class="fact-value">@Value</span>
+    </div>
+}
+
+@code {
+    [Parameter, EditorRequired] public string Label { get; set; } = "";
+    [Parameter] public string? Value { get; set; }
+}
