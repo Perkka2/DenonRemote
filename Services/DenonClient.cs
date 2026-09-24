@@ -45,6 +45,7 @@ public sealed class DenonClient : IAsyncDisposable
     private Task? _senderLoop;
     private NetworkStream? _stream;
     private int _profileLoading;
+    private volatile bool _controlEverConnected;
 
     public DenonClient(
         ReceiverConfig config,
@@ -93,6 +94,20 @@ public sealed class DenonClient : IAsyncDisposable
 
     /// <summary>The receiver answered HTTP but not the control socket - eco standby.</summary>
     public bool Asleep { get; private set; }
+
+    /// <summary>
+    /// A HEOS speaker or link rather than a receiver: HEOS answers, but the control
+    /// socket has never connected and none of the receiver-only interfaces exist. Such
+    /// a device has no zones, inputs, sound modes or setup - only playback. Errs towards
+    /// false: a receiver in eco standby answers HTTP without the control port, and must
+    /// keep its Remote tab or there would be no way to wake it.
+    /// </summary>
+    public bool HeosOnly =>
+        Profile.Heos && !_controlEverConnected && !Asleep &&
+        !Profile.SetupApi && !Profile.SourcesFromDevice && !Profile.AspSetup;
+
+    /// <summary>Whether the thing this device is actually driven through is answering.</summary>
+    public bool Reachable => HeosOnly ? Heos?.State.Connected == true : State.Online;
 
     /// <summary>Raised on any state change. Fired from background threads.</summary>
     public event Action<DenonClient>? StateChanged;
@@ -891,6 +906,7 @@ public sealed class DenonClient : IAsyncDisposable
                 _stream = tcp.GetStream();
                 backoff = TimeSpan.FromSeconds(2);
                 Asleep = false;
+                _controlEverConnected = true;
                 SetOnline(true, null);
                 _log.LogInformation("Connected to {Host}", Config.Host);
 
@@ -915,7 +931,9 @@ public sealed class DenonClient : IAsyncDisposable
             }
 
             if (ct.IsCancellationRequested) break;
-            try { await Task.Delay(backoff, ct); } catch { break; }
+            // A speaker will never open the control port; ask rarely rather than every few seconds.
+            var wait = HeosOnly ? TimeSpan.FromMinutes(1) : backoff;
+            try { await Task.Delay(wait, ct); } catch { break; }
             backoff = TimeSpan.FromSeconds(Math.Min(20, backoff.TotalSeconds * 1.6));
         }
 

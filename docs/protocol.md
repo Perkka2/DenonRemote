@@ -140,6 +140,39 @@ shapes, 165 fields, byte-identical.
 Numeric fields have a Set button beside them and a hidden flag: the value alone is
 accepted and ignored, and the flag has to be turned on in the same post.
 
+## The HEOS command line (HEOS generation)
+
+TCP 1255, one JSON object per line, commands as `heos://group/command?key=value`. The
+app registers for change events once (`system/register_for_change_events?enable=on`) and
+then mostly listens. Replies and events carry their arguments in `heos.message` as a
+query string, not in the payload.
+
+| Want | Command | Where the answer is |
+|---|---|---|
+| Repeat, shuffle | `player/get_play_mode`, `set_play_mode?repeat=off\|on_all\|on_one&shuffle=on\|off` | `repeat`, `shuffle` in message |
+| Queue | `player/get_queue?range=0,49`, `play_queue?qid=` | payload array; `qid` in now-playing marks the current one |
+| Progress | `event/player_now_playing_progress` | `cur_pos`, `duration` in ms, in message |
+
+`set_play_mode` needs only the key being changed. Progress events are not sent by every
+source, and HEOS has no seek command, so the bar is read-only.
+
+The player volume (`player/get_volume`, `set_volume?level=0-100`, `volume_up|down?step=1-10`,
+`get_mute`, `set_mute?state=on|off`, and `event/player_volume_changed`, which carries
+`level` and `mute`) is tracked but only offered on a HEOS-only speaker. On a receiver it
+is the main zone's volume on a different scale from the control socket's, and the two
+controls fight. The queue is hidden for Spotify (`sid` 4 in now-playing): Spotify
+Connect is driven by the phone's app, and `play_queue` on it drops the session.
+
+### HEOS-only devices
+
+A HEOS speaker or link (HEOS 1/3/5/7, Denon Home, HEOS Link) has port 1255 but no
+control socket on 23, no setup API and no `/goform/`. The app treats a device as
+HEOS-only when HEOS answers and none of those ever has: it then shows the Playing tab
+alone, with volume and mute, and reports the device as reachable when the HEOS
+connection is up rather than the control socket. It errs the other way when unsure: a
+receiver in eco standby also refuses port 23 but serves HTTP, so it is not mistaken for
+a speaker, and keeps the Remote tab it needs to be woken.
+
 ## The network player (pre-HEOS)
 
 These units have no HEOS at all and answer the AppCommand API with an empty document,

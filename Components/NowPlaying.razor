@@ -1,4 +1,4 @@
-@* What the HEOS side of the receiver is playing, plus transport. *@
+@* What the HEOS side of the receiver is playing: transport, play mode, progress and queue, plus volume on a HEOS-only speaker. *@
 
 <section class="panel">
     <h2>Now playing</h2>
@@ -7,45 +7,139 @@
     {
         <p class="muted-text">HEOS not connected.</p>
     }
-    else if (!Heos.State.HasTrack)
-    {
-        <p class="muted-text">Nothing playing.</p>
-    }
     else
     {
-        <div class="track">
-            @if (!string.IsNullOrWhiteSpace(Heos.State.ImageUrl))
-            {
-                <img class="cover" src="@Heos.State.ImageUrl" alt="" />
-            }
-            <div class="track-text">
-                <strong>@(Heos.State.Song ?? Heos.State.Station)</strong>
-                @if (!string.IsNullOrWhiteSpace(Heos.State.Artist))
-                {
-                    <span>@Heos.State.Artist</span>
-                }
-                @if (!string.IsNullOrWhiteSpace(Heos.State.Album))
-                {
-                    <span class="dimmer">@Heos.State.Album</span>
-                }
-            </div>
-        </div>
+        var state = Heos.State;
 
-        <div class="transport">
-            <button class="step" @onclick="() => Heos.Previous()">&#9198;</button>
-            <button class="step wide" @onclick="() => Heos.TogglePlay()">
-                @(Playing ? "⏸" : "▶")
+        if (!state.HasTrack)
+        {
+            <p class="muted-text">Nothing playing.</p>
+        }
+        else
+        {
+            <div class="track">
+                @if (!string.IsNullOrWhiteSpace(state.ImageUrl))
+                {
+                    <img class="cover" src="@state.ImageUrl" alt="" />
+                }
+                <div class="track-text">
+                    <strong>@(state.Song ?? state.Station)</strong>
+                    @if (!string.IsNullOrWhiteSpace(state.Artist))
+                    {
+                        <span>@state.Artist</span>
+                    }
+                    @if (!string.IsNullOrWhiteSpace(state.Album))
+                    {
+                        <span class="dimmer">@state.Album</span>
+                    }
+                </div>
+            </div>
+
+            if (state.DurationMs is > 0)
+            {
+                <div class="progress-row">
+                    <span>@Clock(state.PositionMs)</span>
+                    <div class="progress"><div class="progress-fill" style="width: @(Percent(state))%"></div></div>
+                    <span>@Clock(state.DurationMs)</span>
+                </div>
+            }
+
+            <div class="transport">
+                <button class="step" @onclick="() => Heos.Previous()">&#9198;</button>
+                <button class="step wide" @onclick="() => Heos.TogglePlay()">
+                    @(Playing ? "⏸" : "▶")
+                </button>
+                <button class="step" @onclick="() => Heos.Next()">&#9197;</button>
+            </div>
+
+            <div class="mode-row">
+                <button class="pill @(state.Repeat != "off" ? "active" : "")" @onclick="() => Heos.CycleRepeat()">
+                    @RepeatLabel(state.Repeat)
+                </button>
+                <button class="pill @(state.Shuffle ? "active" : "")" @onclick="() => Heos.ToggleShuffle()">
+                    Shuffle
+                </button>
+            </div>
+        }
+
+        if (Client.HeosOnly)
+        {
+            @* A receiver has its own volume on the Remote tab; a speaker has only this. *@
+            <div class="row-slider volume-row">
+                <button class="pill @(state.Muted ? "active" : "")" @onclick="() => Heos.ToggleMute()">
+                    @(state.Muted ? "Muted" : "Mute")
+                </button>
+                <button class="step" @onclick="() => Heos.VolumeDown()">&#8722;</button>
+                <input class="slider small"
+                       type="range" min="0" max="100" step="1"
+                       value="@((state.Volume ?? 0).ToString(CultureInfo.InvariantCulture))"
+                       disabled="@(state.Volume is null)"
+                       @onchange="OnVolume" />
+                <button class="step" @onclick="() => Heos.VolumeUp()">&#43;</button>
+                <span class="level-value">@(state.Volume?.ToString(CultureInfo.InvariantCulture) ?? "—")</span>
+            </div>
+        }
+
+        if (state.QueueUsable && state.Queue.Count > 0)
+        {
+            <button class="pill queue-toggle @(_showQueue ? "active" : "")" @onclick="() => _showQueue = !_showQueue">
+                Queue (@state.Queue.Count)
             </button>
-            <button class="step" @onclick="() => Heos.Next()">&#9197;</button>
-        </div>
+
+            if (_showQueue)
+            {
+                <div class="queue">
+                    @foreach (var item in state.Queue)
+                    {
+                        var qid = item.Qid;
+                        <button class="queue-item @(qid == state.QueueId ? "current" : "")"
+                                @onclick="() => Heos.PlayQueueItem(qid)">
+                            <strong>@(item.Song ?? "—")</strong>
+                            @if (!string.IsNullOrWhiteSpace(item.Artist))
+                            {
+                                <span>@item.Artist</span>
+                            }
+                        </button>
+                    }
+                </div>
+            }
+        }
     }
 </section>
 
 @code {
     [Parameter, EditorRequired] public DenonClient Client { get; set; } = default!;
 
+    private bool _showQueue;
+
     private HeosClient? Heos => Client.Heos;
 
     private bool Playing =>
         string.Equals(Heos?.State.PlayState, "play", StringComparison.OrdinalIgnoreCase);
+
+    private void OnVolume(ChangeEventArgs args)
+    {
+        if (int.TryParse(args.Value?.ToString(), NumberStyles.Integer, CultureInfo.InvariantCulture, out var level))
+            Heos?.SetVolume(level);
+    }
+
+    private static string RepeatLabel(string mode) => mode switch
+    {
+        "on_all" => "Repeat all",
+        "on_one" => "Repeat one",
+        _ => "Repeat",
+    };
+
+    private static int Percent(HeosState state) =>
+        state.DurationMs is > 0 && state.PositionMs is { } position
+            ? (int)Math.Clamp(position * 100 / state.DurationMs.Value, 0, 100)
+            : 0;
+
+    private static string Clock(long? milliseconds)
+    {
+        var span = TimeSpan.FromMilliseconds(milliseconds ?? 0);
+        return span.TotalHours >= 1
+            ? $"{(int)span.TotalHours}:{span.Minutes:00}:{span.Seconds:00}"
+            : $"{span.Minutes}:{span.Seconds:00}";
+    }
 }

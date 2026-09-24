@@ -476,7 +476,24 @@ html, body {
     font-weight: 600;
 }
 
-.transport { display: flex; gap: 8px; justify-content: center; }
+.transport { display: flex; gap: 8px; justify-content: center; margin-top: 12px; }
+.mode-row { display: flex; gap: 8px; justify-content: center; margin-top: 10px; }
+.volume-row { margin-top: 12px; }
+.volume-row .step { width: 40px; height: 40px; border-radius: 12px; }
+
+.progress-row { display: flex; align-items: center; gap: 10px; margin-top: 12px; font-size: 12px; color: var(--dim); font-variant-numeric: tabular-nums; }
+.progress { flex: 1; height: 4px; border-radius: 2px; background: var(--panel-2); overflow: hidden; }
+.progress-fill { height: 100%; background: var(--accent); }
+
+.queue-toggle { margin-top: 12px; }
+.queue { margin-top: 8px; max-height: 260px; overflow-y: auto; display: flex; flex-direction: column; gap: 4px; }
+.queue-item {
+    display: flex; flex-direction: column; align-items: flex-start; gap: 1px;
+    text-align: left; padding: 8px 12px; border-radius: 10px;
+    border: 1px solid var(--line); background: var(--panel-2); color: var(--text); cursor: pointer;
+}
+.queue-item span { font-size: 13px; color: var(--dim); }
+.queue-item.current { border-color: var(--accent); background: var(--accent-soft); }
 .step.wide { width: 86px; }
 
 /* ---------------------------------------------------------------- settings */

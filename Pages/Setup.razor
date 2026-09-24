@@ -136,8 +136,12 @@
     {
         var parts = new List<string> { client.Config.Host };
         if (!string.IsNullOrWhiteSpace(client.Profile.Model)) parts.Add(client.Profile.Model);
-        parts.Add(client.Zones.Count == 1 ? "1 zone" : $"{client.Zones.Count} zones");
-        if (client.Profile.Heos) parts.Add("HEOS");
+        if (client.HeosOnly) parts.Add("HEOS speaker");
+        else
+        {
+            parts.Add(client.Zones.Count == 1 ? "1 zone" : $"{client.Zones.Count} zones");
+            if (client.Profile.Heos) parts.Add("HEOS");
+        }
         if (client.Profile.SourcesFromDevice) parts.Add("named inputs");
         return string.Join(" · ", parts);
     }
