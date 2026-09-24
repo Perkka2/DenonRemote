@@ -61,6 +61,8 @@ never seen shows them anyway.
 
 **Playing** — now playing and transport. The X2500H has HEOS; the X4100W predates it
 and is driven through the interface its own web UI uses.
+A HEOS-only speaker or link has no receiver to remote, so it gets just this tab, with
+volume and mute added. That path has not been tried on real hardware.
 
 <img src="docs/images/player.png" width="420" alt="The Playing tab: track information with transport and repeat controls">
 

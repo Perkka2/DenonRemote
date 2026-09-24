@@ -9,7 +9,7 @@
         {
             var current = candidate;
             <button class="chip @(current == client ? "active" : "")" @onclick="() => Select(current)">
-                <span class="dot @(current.State.Online ? "up" : "down")"></span>
+                <span class="dot @(current.Reachable ? "up" : "down")"></span>
                 @current.Config.Name
             </button>
         }
@@ -26,7 +26,13 @@
 }
 else
 {
-    @if (!client.State.Online && client.Asleep)
+    var shown = Shown(client);
+
+    @if (client.HeosOnly)
+    {
+        @* A speaker has no control socket to be "not connected" to; the panel says so itself. *@
+    }
+    else if (!client.State.Online && client.Asleep)
     {
         <div class="banner standby">
             @client.Config.Name is in eco standby — it stops answering the control port until it wakes.
@@ -59,30 +65,33 @@ else
         </div>
     }
 
-    <nav class="sections">
-        @foreach (var candidate in SectionsFor(client))
-        {
-            var current = candidate;
-            <button class="ztab @(section == current ? "active" : "")" @onclick="() => SelectSection(current)">
-                @Title(current)
-            </button>
-        }
-    </nav>
+    @if (SectionsFor(client).Count > 1)
+    {
+        <nav class="sections">
+            @foreach (var candidate in SectionsFor(client))
+            {
+                var current = candidate;
+                <button class="ztab @(shown == current ? "active" : "")" @onclick="() => SelectSection(current)">
+                    @Title(current)
+                </button>
+            }
+        </nav>
+    }
 
-    @if (section == "sound")
+    @if (shown == "sound")
     {
         <SoundPanel Client="client" />
         <SurroundPanel Client="client" />
     }
-    else if (section == "eq")
+    else if (shown == "eq")
     {
         <GraphicEqPanel Client="client" />
     }
-    else if (section == "info")
+    else if (shown == "info")
     {
         <InfoPanel Client="client" />
     }
-    else if (section == "setup")
+    else if (shown == "setup")
     {
         @if (client.AspSetup is { } asp)
         {
@@ -93,15 +102,15 @@ else
             <SetupBrowser Client="client" />
         }
     }
-    else if (section == "system")
+    else if (shown == "system")
     {
         <SystemPanel Client="client" />
     }
-    else if (section == "menu")
+    else if (shown == "menu")
     {
         <MenuPad Client="client" />
     }
-    else if (section == "playing")
+    else if (shown == "playing")
     {
         @if (client.NetAudio is { } player)
         {
@@ -206,8 +215,18 @@ else
         RememberInUrl();
     }
 
+    /// <summary>The section to draw: the chosen one, or the first that exists for this device.</summary>
+    private string Shown(DenonClient candidate)
+    {
+        var sections = SectionsFor(candidate);
+        return sections.Contains(section) ? section : sections[0];
+    }
+
     private static IReadOnlyList<string> SectionsFor(DenonClient candidate)
     {
+        // A speaker can play and nothing else.
+        if (candidate.HeosOnly) return ["playing"];
+
         var sections = new List<string> { "remote", "sound" };
         if (candidate.Eq.Available) sections.Add("eq");
         sections.Add("system");
