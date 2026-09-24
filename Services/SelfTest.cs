@@ -34,6 +34,7 @@ public static class SelfTest
         SetupUiMenu();
         ReceiverPacing();
         ReceiverNaming();
+        HeosProtocol();
 
         Console.WriteLine();
         Console.WriteLine($"  {_passed} passed, {Failures.Count} failed");
@@ -1212,6 +1213,79 @@ public static class SelfTest
         client.ClearPending();
         action();
         return client.Pending.FirstOrDefault();
+    }
+
+    /// <summary>
+    /// The HEOS command line, fed the shapes its specification documents: what arrives
+    /// encoded, who is in which group, and what must not be believed twice.
+    /// </summary>
+    private static void HeosProtocol()
+    {
+        Check("special characters survive a round trip",
+            HeosClient.Decode(HeosClient.Encode("Rock & Roll = 100%")) == "Rock & Roll = 100%");
+        Check("an ampersand is sent as %26", HeosClient.Encode("a&b") == "a%26b");
+        Check("a device's %2526 is a literal %26, not an ampersand", HeosClient.Decode("%2526") == "%26");
+
+        var heos = new HeosClient("10.0.0.5", NullLogger<HeosClient>.Instance);
+
+        heos.Handle("""{"heos":{"command":"player/get_players","result":"success","message":""},"payload":[""" +
+            """{"name":"Living Room","pid":-100,"gid":-100,"model":"AVR-X2500H","ip":"10.0.0.5"},""" +
+            """{"name":"Kitchen","pid":200,"gid":-100,"model":"HEOS 1","ip":"10.0.0.9"},""" +
+            """{"name":"Bedroom","pid":300,"model":"HEOS 3","ip":"10.0.0.10"}]}""");
+
+        Check("every player is kept", heos.State.Players.Count == 3);
+        Check("the player at this address is the one controlled", heos.State.PlayerId == -100);
+        Check("and it is known to be the device itself", heos.State.SelectedIsHost);
+        Check("another room is not the device",
+            heos.State.Players.First(p => p.Pid == 200).IsHost == false);
+        Check("the group is the leader then its followers",
+            heos.GroupOfSelected().Select(p => p.Pid).SequenceEqual(new[] { -100, 200 }));
+
+        heos.Handle("""{"heos":{"command":"event/player_volume_changed","message":"pid=200&level=35&mute=on"}}""");
+        Check("another room's volume is tracked", heos.State.Players.First(p => p.Pid == 200).Volume == 35);
+        Check("and its mute", heos.State.Players.First(p => p.Pid == 200).Muted);
+        Check("without touching the selected player's", heos.State.Volume is null);
+
+        heos.Handle("""{"heos":{"command":"player/get_now_playing_media","result":"success","message":"pid=-100"}""" +
+            ""","payload":{"type":"song","song":"Rock %26 Roll","artist":"A","sid":4,"qid":1}}""");
+        Check("titles are decoded for display", heos.State.Song == "Rock & Roll");
+        Check("Spotify has no usable queue", heos.State.QueueUsable == false);
+
+        heos.Handle("""{"heos":{"command":"player/get_now_playing_media","result":"success","message":"pid=-100"}""" +
+            ""","payload":{"type":"song","song":"B","sid":1024,"qid":2}}""");
+        Check("a local source does", heos.State.QueueUsable);
+
+        heos.Handle("""{"heos":{"command":"event/player_now_playing_progress","message":"pid=-100&cur_pos=61000&duration=240000"}}""");
+        Check("progress carries the position", heos.State.PositionMs == 61000 && heos.State.DurationMs == 240000);
+
+        heos.Handle("""{"heos":{"command":"player/get_queue","result":"success","message":"pid=-100&range=0,49"}""" +
+            ""","payload":[{"song":"One","artist":"X","qid":1,"mid":"9"},{"song":"Two","artist":"X","qid":2,"mid":"10"}]}""");
+        Check("the queue is read", heos.State.Queue.Count == 2 && heos.State.Queue[1].Qid == 2);
+
+        heos.Handle("""{"heos":{"command":"player/play_queue","result":"fail","message":"eid=14&text=cannot play&pid=-100"}}""");
+        Check("a refused command is reported in the device's words", heos.State.Error == "cannot play");
+
+        heos.State.Error = null;
+        heos.Handle("""{"heos":{"command":"player/get_queue","result":"fail","message":"eid=4&text=Requested data not available."}}""");
+        Check("an empty read is not an error", heos.State.Error is null);
+
+        heos.Handle("""{"heos":{"command":"browse/browse","result":"success","message":"command under process"}}""");
+        Check("the interim browse answer is ignored", heos.State.Error is null);
+
+        heos.Handle("""{"heos":{"command":"system/check_account","result":"success","message":"signed_in&un=bob@example.com"}}""");
+        Check("the signed-in account is read", heos.State.SignedIn == true && heos.State.Account == "bob@example.com");
+        heos.Handle("""{"heos":{"command":"event/user_changed","message":"signed_out"}}""");
+        Check("and its sign-out", heos.State.SignedIn == false && heos.State.Account is null);
+
+        var lone = new HeosClient("10.0.0.99", NullLogger<HeosClient>.Instance);
+        lone.Handle("""{"heos":{"command":"player/get_players","result":"success","message":""},"payload":[""" +
+            """{"name":"Den","pid":7,"model":"HEOS 5"}]}""");
+        Check("a lone player is the device even without an address", lone.State.SelectedIsHost && lone.State.PlayerId == 7);
+
+        var page = new HeosItem("Local Music", "heos_server", null, null, null, 1024, false, false, null, null);
+        Check("a server is browsed into, not played", page.IsSource);
+        Check("a song is not a source",
+            !new HeosItem("Song", "song", null, null, "5", null, false, true, null, null).IsSource);
     }
 
     private static void Check(string what, bool ok)

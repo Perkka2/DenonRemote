@@ -605,3 +605,33 @@ select.text { appearance: none; }
 }
 .matrix-cell { flex: 1 1 96px; min-width: 88px; }
 .matrix-cell select.text { width: 100%; padding: 7px 8px; font-size: 13px; }
+
+/* ---------------------------------------------------------------- rooms and browse */
+
+.room { display: flex; flex-direction: column; gap: 8px; padding: 8px 0; border-top: 1px solid var(--line); }
+.room:first-of-type { border-top: 0; }
+.room-head { display: flex; gap: 8px; flex-wrap: wrap; }
+
+.account-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.signin summary { color: var(--dim); font-size: 14px; cursor: pointer; }
+
+.notice { margin: 0; font-size: 14px; color: var(--good); }
+
+.crumbs { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.chev { color: var(--dim); }
+
+.browse-search { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-top: 8px; }
+.browse-search .text { flex: 1; min-width: 120px; }
+
+.sources { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; }
+
+.browse-row { display: flex; flex-direction: column; gap: 6px; padding: 6px 0; border-top: 1px solid var(--line); }
+.browse-main {
+    display: flex; align-items: center; gap: 10px; width: 100%;
+    background: transparent; border: 0; padding: 0; color: var(--text); text-align: left; cursor: pointer;
+}
+.browse-main:disabled { cursor: default; opacity: 1; }
+.browse-text { display: flex; flex-direction: column; min-width: 0; flex: 1; }
+.browse-text span { color: var(--dim); font-size: 13px; }
+.thumb { width: 44px; height: 44px; border-radius: 8px; object-fit: cover; background: var(--panel-2); flex: none; }
+.browse-actions { display: flex; gap: 6px; padding-left: 54px; }

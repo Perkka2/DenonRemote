@@ -61,8 +61,13 @@ never seen shows them anyway.
 
 **Playing** — now playing and transport. The X2500H has HEOS; the X4100W predates it
 and is driven through the interface its own web UI uses.
-A HEOS-only speaker or link has no receiver to remote, so it gets just this tab, with
-volume and mute added. That path has not been tried on real hardware.
+**Music** — browse and search the HEOS sources (local library, playlists, favorites,
+TuneIn and the streaming services the HEOS account has) and play or queue what is found.
+The **Rooms** panel on the Playing tab lists every HEOS player on the network: pick which
+to control, group rooms, and set their volumes.
+
+A HEOS-only speaker or link has no receiver to remote, so it gets just Playing and Music,
+with volume and mute added. Neither it nor browsing has been tried on real hardware.
 
 <img src="docs/images/player.png" width="420" alt="The Playing tab: track information with transport and repeat controls">
 

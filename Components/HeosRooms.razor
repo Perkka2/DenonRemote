@@ -1,0 +1,89 @@
+@* Every HEOS player the device can see: pick which one to control, group them, set their volumes. *@
+
+@if (Heos is { State.Connected: true } heos && heos.State.Players.Count > 1)
+{
+    var state = heos.State;
+    var group = heos.GroupOfSelected();
+    var leader = group.Count > 0 ? group[0] : null;
+
+    <section class="panel">
+        <h2>Rooms</h2>
+
+        @foreach (var player in state.Players)
+        {
+            var room = player;
+            var selected = room.Pid == state.PlayerId;
+            var together = group.Any(member => member.Pid == room.Pid);
+            var isLeader = leader is not null && leader.Pid == room.Pid;
+
+            <div class="room">
+                <div class="room-head">
+                    <button class="pill @(selected ? "active" : "")" @onclick="() => heos.SelectPlayer(room.Pid)">
+                        @room.Name
+                    </button>
+
+                    @if (!selected)
+                    {
+                        <button class="pill @(together ? "active" : "")"
+                                disabled="@isLeader"
+                                title="@(isLeader ? "This room leads the group" : "")"
+                                @onclick="() => Toggle(heos, group, room)">
+                            @(together ? "Together" : "Separate")
+                        </button>
+                    }
+                </div>
+
+                @* The receiver's own player is the main zone, which the Remote tab already drives. *@
+                @if (!room.IsHost)
+                {
+                    <div class="row-slider">
+                        <button class="pill @(room.Muted ? "active" : "")" @onclick="() => heos.ToggleMute(room.Pid)">
+                            @(room.Muted ? "Muted" : "Mute")
+                        </button>
+                        <input class="slider small"
+                               type="range" min="0" max="100" step="1"
+                               value="@((room.Volume ?? 0).ToString(CultureInfo.InvariantCulture))"
+                               disabled="@(room.Volume is null)"
+                               @onchange="(ChangeEventArgs args) => OnVolume(heos, room, args)" />
+                        <span class="level-value">@(room.Volume?.ToString(CultureInfo.InvariantCulture) ?? "—")</span>
+                    </div>
+                }
+            </div>
+        }
+
+        @if (group.Count > 1)
+        {
+            <button class="ghost small" @onclick="() => heos.SetGroup(new[] { group[0].Pid })">Ungroup all</button>
+        }
+    </section>
+}
+
+@code {
+    [Parameter, EditorRequired] public DenonClient Client { get; set; } = default!;
+
+    private HeosClient? Heos => Client.Heos;
+
+    /// <summary>
+    /// Adds or removes one room. The group is set through its leader, whose id comes
+    /// first; a group of one is no group, so removing the last follower ungroups.
+    /// </summary>
+    private static void Toggle(HeosClient heos, IReadOnlyList<HeosPlayer> group, HeosPlayer room)
+    {
+        var selected = heos.State.Players.FirstOrDefault(p => p.Pid == heos.State.PlayerId);
+        var leader = group.Count > 0 ? group[0] : selected;
+        if (leader is null) return;
+
+        var pids = group.Count > 0 ? group.Select(p => p.Pid).ToList() : new List<int> { leader.Pid };
+
+        if (!pids.Remove(room.Pid)) pids.Add(room.Pid);
+        if (pids.Count == 0 || pids[0] != leader.Pid) return;
+
+        heos.SetGroup(pids);
+    }
+
+    private static void OnVolume(HeosClient heos, HeosPlayer room, ChangeEventArgs args)
+    {
+        if (int.TryParse(args.Value?.ToString(), NumberStyles.Integer, CultureInfo.InvariantCulture, out var level))
+            heos.SetVolume(room.Pid, level);
+    }
+}
