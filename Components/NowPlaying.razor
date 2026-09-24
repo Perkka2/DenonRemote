@@ -1,7 +1,13 @@
-@* What the HEOS side of the receiver is playing: transport, play mode, progress and queue, plus volume on a HEOS-only speaker. *@
+@* What the selected HEOS player is playing: transport, play mode, progress and queue, plus volume where the receiver has no other. *@
 
 <section class="panel">
-    <h2>Now playing</h2>
+    <h2>
+        Now playing
+        @if (Heos is { State.Players.Count: > 1 } && Heos.State.PlayerName is { } room)
+        {
+            <span class="current">@room</span>
+        }
+    </h2>
 
     @if (Heos is null || !Heos.State.Connected)
     {
@@ -10,6 +16,14 @@
     else
     {
         var state = Heos.State;
+
+        if (state.Error is { } problem)
+        {
+            <div class="banner warn">
+                @problem
+                <button class="inline" @onclick="() => Heos.ClearError()">Dismiss</button>
+            </div>
+        }
 
         if (!state.HasTrack)
         {
@@ -62,9 +76,9 @@
             </div>
         }
 
-        if (Client.HeosOnly)
+        if (OffersVolume)
         {
-            @* A receiver has its own volume on the Remote tab; a speaker has only this. *@
+            @* A receiver has its own volume on the Remote tab; a speaker or another room has only this. *@
             <div class="row-slider volume-row">
                 <button class="pill @(state.Muted ? "active" : "")" @onclick="() => Heos.ToggleMute()">
                     @(state.Muted ? "Muted" : "Mute")
@@ -113,6 +127,13 @@
     private bool _showQueue;
 
     private HeosClient? Heos => Client.Heos;
+
+    /// <summary>
+    /// Not for a receiver's own player: that is the main zone, already on the Remote tab
+    /// on a different scale. A speaker, or another room reached through the receiver, has
+    /// nothing else.
+    /// </summary>
+    private bool OffersVolume => Client.HeosOnly || Heos?.State.SelectedIsHost == false;
 
     private bool Playing =>
         string.Equals(Heos?.State.PlayState, "play", StringComparison.OrdinalIgnoreCase);

@@ -1,0 +1,395 @@
+@* Browse and play through HEOS: its sources, what is inside them, and search. *@
+
+<section class="panel">
+    <h2>Music</h2>
+
+    @if (Heos is null || !Heos.State.Connected || Heos.State.PlayerId is null)
+    {
+        <p class="muted-text">HEOS not connected.</p>
+    }
+    else
+    {
+        var state = Heos.State;
+
+        <p class="muted-text">Plays on @state.PlayerName</p>
+
+        @if (state.SignedIn == true)
+        {
+            <div class="account-row">
+                <span class="muted-text">Signed in as @state.Account</span>
+                <button class="pill" @onclick="() => Heos.SignOut()">Sign out</button>
+            </div>
+        }
+        else if (state.SignedIn == false)
+        {
+            <details class="signin">
+                <summary>Sign in to HEOS for streaming services</summary>
+                <div class="browse-search">
+                    <input class="text" type="text" placeholder="HEOS account" autocomplete="username" @bind="_user" />
+                    <input class="text" type="password" placeholder="Password" autocomplete="current-password" @bind="_password" />
+                    <button class="pill" @onclick="SignIn">Sign in</button>
+                </div>
+                <p class="muted-text">Sent to the speaker only, and not kept.</p>
+            </details>
+        }
+
+        @if (state.Error is { } problem)
+        {
+            <div class="banner warn">
+                @problem
+                <button class="inline" @onclick="() => Heos.ClearError()">Dismiss</button>
+            </div>
+        }
+
+        @if (_error is not null)
+        {
+            <div class="banner warn">
+                @_error
+                <button class="inline" @onclick="() => _error = null">Dismiss</button>
+            </div>
+        }
+
+        @if (_notice is not null)
+        {
+            <p class="notice">@_notice</p>
+        }
+
+        @if (_stack.Count > 0)
+        {
+            <div class="crumbs">
+                <button class="pill" @onclick="() => PopToAsync(0)">Sources</button>
+                @for (var depth = 0; depth < _stack.Count; depth++)
+                {
+                    var keep = depth + 1;
+                    var last = keep == _stack.Count;
+                    <span class="chev">&#8250;</span>
+                    <button class="pill @(last ? "active" : "")" disabled="@last" @onclick="() => PopToAsync(keep)">
+                        @_stack[depth].Title
+                    </button>
+                }
+            </div>
+
+            @if (Current is { Cid: null, Search: null } && _criteria.Count > 0)
+            {
+                <div class="browse-search">
+                    <input class="text" type="text" placeholder="Search" @bind="_query" @bind:event="oninput"
+                           @onkeydown="OnSearchKey" />
+                    <select class="text" @bind="_scid">
+                        @foreach (var criterion in _criteria)
+                        {
+                            <option value="@criterion.Scid">@criterion.Name</option>
+                        }
+                    </select>
+                    <button class="pill" disabled="@(string.IsNullOrWhiteSpace(_query))" @onclick="SearchAsync">Search</button>
+                </div>
+            }
+
+            @foreach (var item in _items)
+            {
+                var row = item;
+                <div class="browse-row">
+                    <button class="browse-main" disabled="@(!Navigable(row))" @onclick="() => OpenAsync(row)">
+                        @if (!string.IsNullOrWhiteSpace(row.ImageUrl))
+                        {
+                            <img class="thumb" src="@row.ImageUrl" alt="" loading="lazy" />
+                        }
+                        <span class="browse-text">
+                            <strong>@row.Name</strong>
+                            @if (!string.IsNullOrWhiteSpace(row.Artist))
+                            {
+                                <span>@row.Artist</span>
+                            }
+                        </span>
+                        @if (Navigable(row))
+                        {
+                            <span class="chev">&#8250;</span>
+                        }
+                    </button>
+
+                    @if (row.Playable)
+                    {
+                        <div class="browse-actions">
+                            @if (row.Type == "station")
+                            {
+                                <button class="pill" @onclick="() => PlayAsync(row, HeosClient.PlayNow)">Play</button>
+                            }
+                            else if (row.Container)
+                            {
+                                <button class="pill" @onclick="() => PlayAsync(row, HeosClient.ReplaceAndPlay)">Play</button>
+                                <button class="pill" @onclick="() => PlayAsync(row, HeosClient.AddToEnd)">Add</button>
+                            }
+                            else
+                            {
+                                <button class="pill" @onclick="() => PlayAsync(row, HeosClient.PlayNow)">Play</button>
+                                <button class="pill" @onclick="() => PlayAsync(row, HeosClient.PlayNext)">Next</button>
+                                <button class="pill" @onclick="() => PlayAsync(row, HeosClient.AddToEnd)">Add</button>
+                            }
+                        </div>
+                    }
+                </div>
+            }
+
+            @if (_busy)
+            {
+                <p class="muted-text">Loading…</p>
+            }
+            else if (_items.Count == 0 && _error is null)
+            {
+                <p class="muted-text">Nothing here.</p>
+            }
+
+            @if (_more && !_busy)
+            {
+                <button class="ghost small" @onclick="LoadMoreAsync">Load more</button>
+            }
+        }
+        else if (_sources is null)
+        {
+            <p class="muted-text">@(_busy ? "Loading…" : "No sources yet.")</p>
+        }
+        else
+        {
+            <div class="sources">
+                @foreach (var source in _sources)
+                {
+                    var current = source;
+                    <button class="tile" @onclick="() => PushAsync(new Level(current.Sid, null, current.Name))">
+                        @current.Name
+                    </button>
+                }
+            </div>
+
+            <button class="ghost small" disabled="@_busy" @onclick="LoadSourcesAsync">Refresh</button>
+        }
+    }
+</section>
+
+@code {
+    [Parameter, EditorRequired] public DenonClient Client { get; set; } = default!;
+
+    private sealed record Level(int Sid, string? Cid, string Title, string? Search = null, string? Scid = null);
+
+    private const int PageSize = 50;
+
+    /// <summary>Spotify, Moodmix and QQ Music are not browsable through the CLI.</summary>
+    private static readonly HashSet<int> NotBrowsable = [4, 15, 18];
+
+    private readonly List<Level> _stack = [];
+    private readonly List<HeosItem> _items = [];
+    private List<HeosSource>? _sources;
+    private IReadOnlyList<HeosSearchCriterion> _criteria = [];
+    private bool _more;
+    private bool _busy;
+    private bool _loadedOnce;
+    private bool? _signedInSeen;
+    private int _offset;
+    private int _generation;
+    private string? _error;
+    private string? _notice;
+    private string _query = "";
+    private string _scid = "";
+    private string _user = "";
+    private string _password = "";
+
+    private HeosClient? Heos => Client.Heos;
+
+    private Level? Current => _stack.Count > 0 ? _stack[_stack.Count - 1] : null;
+
+    private static bool Navigable(HeosItem item) =>
+        item.IsSource || (item.Container && item.Cid is not null);
+
+    protected override async Task OnParametersSetAsync()
+    {
+        var heos = Heos;
+        if (heos is null || !heos.State.Connected || heos.State.PlayerId is null) return;
+
+        // Signing in or out changes which services are offered.
+        var accountChanged = heos.State.SignedIn != _signedInSeen;
+        _signedInSeen = heos.State.SignedIn;
+
+        if (!_busy && (!_loadedOnce || accountChanged))
+            await LoadSourcesAsync();
+    }
+
+    private async Task LoadSourcesAsync()
+    {
+        if (Heos is null) return;
+
+        _loadedOnce = true;
+        _busy = true;
+        _error = null;
+
+        try
+        {
+            var all = await Heos.GetSourcesAsync();
+            _sources = all.Where(s => s.Available && !NotBrowsable.Contains(s.Sid)).ToList();
+        }
+        catch (Exception ex)
+        {
+            _error = ex.Message;
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private async Task PushAsync(Level level)
+    {
+        _stack.Add(level);
+        await LoadLevelAsync();
+    }
+
+    /// <summary>Keeps the first <paramref name="keep"/> levels and goes back to the last of them.</summary>
+    private async Task PopToAsync(int keep)
+    {
+        if (keep >= _stack.Count) return;
+
+        _stack.RemoveRange(keep, _stack.Count - keep);
+        if (_stack.Count == 0)
+        {
+            _generation++;
+            _items.Clear();
+            _criteria = [];
+            _more = false;
+            _busy = false;
+            _notice = null;
+            return;
+        }
+
+        await LoadLevelAsync();
+    }
+
+    private async Task LoadLevelAsync()
+    {
+        _generation++;
+        _items.Clear();
+        _criteria = [];
+        _offset = 0;
+        _more = false;
+        _error = null;
+        _notice = null;
+
+        await LoadMoreAsync();
+
+        // Search belongs to the top of a source, so ask once there.
+        var level = Current;
+        if (level is { Cid: null, Search: null } && Heos is not null)
+        {
+            var generation = _generation;
+            try
+            {
+                var criteria = await Heos.GetSearchCriteriaAsync(level.Sid);
+                if (generation == _generation)
+                {
+                    _criteria = criteria;
+                    _scid = criteria.FirstOrDefault()?.Scid ?? "";
+                }
+            }
+            catch
+            {
+                // Plenty of sources cannot be searched; then there is simply no box.
+            }
+        }
+    }
+
+    private async Task LoadMoreAsync()
+    {
+        var level = Current;
+        if (level is null || Heos is null) return;
+
+        var generation = _generation;
+        _busy = true;
+
+        try
+        {
+            var page = level.Search is null
+                ? await Heos.BrowseAsync(level.Sid, level.Cid, _offset, PageSize)
+                : await Heos.SearchAsync(level.Sid, level.Search, level.Scid ?? "1", _offset, PageSize);
+
+            if (generation != _generation) return;
+
+            _items.AddRange(page.Items);
+            _offset += page.Returned;
+
+            // Only pages that were asked for by range can be continued; the top of most
+            // sources arrives whole.
+            var ranged = level.Cid is not null || level.Search is not null || level.Sid == HeosClient.FavoritesSourceId;
+            _more = ranged && page.Returned > 0 && (page.Count == 0 || _offset < page.Count);
+        }
+        catch (Exception ex)
+        {
+            if (generation == _generation) _error = ex.Message;
+        }
+        finally
+        {
+            if (generation == _generation) _busy = false;
+        }
+    }
+
+    private async Task OpenAsync(HeosItem item)
+    {
+        var level = Current;
+        if (level is null) return;
+
+        if (item.IsSource && item.Sid is { } sid)
+            await PushAsync(new Level(sid, null, item.Name));
+        else if (item.Container && item.Cid is not null)
+            await PushAsync(new Level(item.Sid ?? level.Sid, item.Cid, item.Name));
+    }
+
+    private async Task SearchAsync()
+    {
+        var level = Current;
+        if (level is null || string.IsNullOrWhiteSpace(_query)) return;
+
+        var text = _query.Trim();
+        await PushAsync(new Level(level.Sid, null, $"“{text}”", text, string.IsNullOrEmpty(_scid) ? "1" : _scid));
+    }
+
+    private async Task OnSearchKey(KeyboardEventArgs args)
+    {
+        if (args.Key == "Enter") await SearchAsync();
+    }
+
+    private async Task PlayAsync(HeosItem item, int aid)
+    {
+        var level = Current;
+        if (level is null || Heos is null) return;
+
+        var sid = item.Sid ?? level.Sid;
+        _notice = null;
+        _error = null;
+
+        string? failure;
+        if (item.Type == "station" && item.Mid is { } station)
+            failure = await Heos.PlayStationAsync(sid, level.Cid, station, item.Name);
+        else if (item.Container && item.Cid is { } container)
+            failure = await Heos.AddToQueueAsync(sid, container, null, aid);
+        else if (item.Mid is { } track)
+            failure = await Heos.AddToQueueAsync(sid, level.Cid, track, aid);
+        else
+            failure = "There is nothing to play there.";
+
+        if (failure is not null)
+        {
+            _error = failure;
+            return;
+        }
+
+        _notice = (item.Type == "station" ? "Playing" : aid switch
+        {
+            HeosClient.PlayNext => "Playing next",
+            HeosClient.AddToEnd => "Added to the queue",
+            _ => "Playing",
+        }) + $": {item.Name}";
+    }
+
+    private void SignIn()
+    {
+        if (Heos is null || string.IsNullOrWhiteSpace(_user) || string.IsNullOrEmpty(_password)) return;
+
+        Heos.SignIn(_user.Trim(), _password);
+        _password = "";
+    }
+}

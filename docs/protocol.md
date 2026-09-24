@@ -145,33 +145,53 @@ accepted and ignored, and the flag has to be turned on in the same post.
 TCP 1255, one JSON object per line, commands as `heos://group/command?key=value`. The
 app registers for change events once (`system/register_for_change_events?enable=on`) and
 then mostly listens. Replies and events carry their arguments in `heos.message` as a
-query string, not in the payload.
+query string, not in the payload. Every string the device sends has `&`, `=` and `%`
+encoded as `%26`, `%3D`, `%25`; ids go back exactly as received, text shown to a person
+is decoded, and text a person types is encoded.
+
+One connection reaches every HEOS player on the network, so the app lists them all
+(`player/get_players`, refreshed on `event/players_changed` and `event/groups_changed`)
+and lets the person pick which one to control.
 
 | Want | Command | Where the answer is |
 |---|---|---|
 | Repeat, shuffle | `player/get_play_mode`, `set_play_mode?repeat=off\|on_all\|on_one&shuffle=on\|off` | `repeat`, `shuffle` in message |
 | Queue | `player/get_queue?range=0,49`, `play_queue?qid=` | payload array; `qid` in now-playing marks the current one |
 | Progress | `event/player_now_playing_progress` | `cur_pos`, `duration` in ms, in message |
+| Volume | `player/get_volume`, `set_volume?level=0-100`, `volume_up\|down?step=1-10`; `event/player_volume_changed` | `level`, `mute` in message |
+| Mute | `player/get_mute`, `set_mute?state=on\|off` | `state` in message |
+| Groups | `group/set_group?pid=leader,member,...`; a lone pid ungroups | `gid` on each player is its leader's pid |
+| Sources | `browse/get_music_sources` | payload array of `sid`, `name`, `type`, `available` |
+| Browse | `browse/browse?sid=`, then `&cid=&range=0,49` | payload items: `container`, `playable`, `type`, `cid`, `mid`; `count`, `returned` in message |
+| Search | `browse/get_search_criteria?sid=`, `browse/search?sid=&search=&scid=&range=` | as browse |
+| Play | `browse/play_stream?pid=&sid=&cid=&mid=&name=` (stations, inputs), `browse/add_to_queue?pid=&sid=&cid=&mid=&aid=` | `aid` 1 now, 2 next, 3 end, 4 replace and play |
+| Account | `system/check_account`, `sign_in?un=&pw=`, `sign_out`; `event/user_changed` | `signed_in&un=...` or `signed_out` in message |
 
 `set_play_mode` needs only the key being changed. Progress events are not sent by every
 source, and HEOS has no seek command, so the bar is read-only.
 
-The player volume (`player/get_volume`, `set_volume?level=0-100`, `volume_up|down?step=1-10`,
-`get_mute`, `set_mute?state=on|off`, and `event/player_volume_changed`, which carries
-`level` and `mute`) is tracked but only offered on a HEOS-only speaker. On a receiver it
-is the main zone's volume on a different scale from the control socket's, and the two
-controls fight. The queue is hidden for Spotify (`sid` 4 in now-playing): Spotify
-Connect is driven by the phone's app, and `play_queue` on it drops the session.
+Browse replies are slow when the device fetches from a service: it first sends
+`command under process` with no arguments, and the real reply later. Requests carry
+`SEQUENCE=n`, which the device echoes in `message`, to pair them.
+
+**Spotify is not browsable** (`sid` 4; nor Moodmix or QQ Music), and its queue is hidden:
+Spotify Connect is driven by the phone's app, and `play_queue` on it drops the session.
+
+**Volume.** A receiver's own HEOS player volume is the main zone's on a different scale
+from the control socket's, so the two fight; the app offers HEOS volume only for a
+speaker or for another room, never for the receiver's own player. Searching a track in
+results that have no container id sends `add_to_queue` without `cid`, which the
+specification does not clearly allow.
 
 ### HEOS-only devices
 
 A HEOS speaker or link (HEOS 1/3/5/7, Denon Home, HEOS Link) has port 1255 but no
 control socket on 23, no setup API and no `/goform/`. The app treats a device as
-HEOS-only when HEOS answers and none of those ever has: it then shows the Playing tab
-alone, with volume and mute, and reports the device as reachable when the HEOS
-connection is up rather than the control socket. It errs the other way when unsure: a
-receiver in eco standby also refuses port 23 but serves HTTP, so it is not mistaken for
-a speaker, and keeps the Remote tab it needs to be woken.
+HEOS-only when HEOS answers and none of those ever has: it then shows the Playing and
+Music tabs alone, and reports the device as reachable when the HEOS connection is up
+rather than the control socket. It errs the other way when unsure: a receiver in eco
+standby also refuses port 23 but serves HTTP, so it is not mistaken for a speaker, and
+keeps the Remote tab it needs to be woken.
 
 ## The network player (pre-HEOS)
 
