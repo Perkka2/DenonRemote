@@ -64,7 +64,8 @@ and is driven through the interface its own web UI uses.
 **Music** — browse and search the HEOS sources (local library, playlists, favorites,
 TuneIn and the streaming services the HEOS account has) and play or queue what is found.
 The **Rooms** panel on the Playing tab lists every HEOS player on the network: pick which
-to control, group rooms, and set their volumes.
+to control, group rooms, and set their volumes — a grouped set gets one fader and one
+mute for the whole group, alongside each room's own.
 
 A HEOS-only speaker or link has no receiver to remote, so it gets just Playing and Music,
 with volume and mute added. Neither it nor browsing has been tried on real hardware.
@@ -113,7 +114,7 @@ Runs against both receivers on a home network. Checks:
 dotnet run -- --self-test
 ```
 
-273 checks over the parts that have actually had bugs — protocol parsing, command
+312 checks over the parts that have actually had bugs — protocol parsing, command
 encoding, both graphic-EQ payload shapes, the setup API's XML, the network player's
 two screen modes, and the request pacing. It's a flag on the app rather than a test
 project, so it needs no packages and runs anywhere the app runs; the publish script

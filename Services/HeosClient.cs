@@ -20,6 +20,9 @@ public sealed class HeosState
     /// <summary>Every player the connected device can see, replaced whole on each refresh.</summary>
     public IReadOnlyList<HeosPlayer> Players { get; set; } = [];
 
+    /// <summary>The groups those players form, rebuilt with them.</summary>
+    public IReadOnlyList<HeosGroup> Groups { get; set; } = [];
+
     /// <summary>The player being controlled. Defaults to the device itself; the person can change it.</summary>
     public int? PlayerId { get; set; }
     public string? PlayerName { get; set; }
@@ -225,6 +228,33 @@ public sealed class HeosClient(string host, ILogger<HeosClient> log) : IAsyncDis
         var members = players.Where(p => p.Gid == leader && p.Pid != leader).ToList();
         var head = players.FirstOrDefault(p => p.Pid == leader) ?? selected;
         return [head, .. members];
+    }
+
+    /// <summary>The group the selected player is in, or null when it plays on its own.</summary>
+    public HeosGroup? SelectedGroupLevels()
+    {
+        var selected = State.Players.FirstOrDefault(p => p.Pid == _pid);
+        var gid = selected?.Gid ?? selected?.Pid;
+        return gid is null ? null : State.Groups.FirstOrDefault(group => group.Gid == gid);
+    }
+
+    /// <summary>
+    /// The whole group's level. HEOS moves each member itself and reports every one back
+    /// as its own volume event, so this sends the group command alone - sending that and
+    /// the members' own would be two hands on the same dial.
+    /// </summary>
+    public void SetGroupVolume(int gid, int level)
+    {
+        level = Math.Clamp(level, 0, 100);
+        GroupLevels(gid, level, null);
+        Command($"group/set_volume?gid={gid}&level={level}");
+    }
+
+    public void ToggleGroupMute(int gid)
+    {
+        var muted = !(State.Groups.FirstOrDefault(group => group.Gid == gid)?.Muted ?? false);
+        GroupLevels(gid, null, muted);
+        Command($"group/set_mute?gid={gid}&state={(muted ? "on" : "off")}");
     }
 
     public void ClearError()
@@ -600,6 +630,13 @@ public sealed class HeosClient(string host, ILogger<HeosClient> log) : IAsyncDis
                     ApplyLevels(message);
                     break;
 
+                case "group/get_volume":
+                case "group/get_mute":
+                case "event/group_volume_changed":
+                    // A group keeps a level of its own, apart from the members'.
+                    ApplyGroupLevels(message);
+                    break;
+
                 case "player/get_play_mode":
                 case "event/repeat_mode_changed":
                 case "event/shuffle_mode_changed":
@@ -673,6 +710,7 @@ public sealed class HeosClient(string host, ILogger<HeosClient> log) : IAsyncDis
 
         if (players.Count == 0) return;
         State.Players = players;
+        RebuildGroups(players);
 
         // Keep the player the person picked; failing that this device's own, else the first.
         var wanted = _pid ?? _wantedPid;
@@ -711,6 +749,41 @@ public sealed class HeosClient(string host, ILogger<HeosClient> log) : IAsyncDis
         Command($"player/get_mute?pid={_pid}");
         Command($"player/get_play_mode?pid={_pid}");
         Command($"player/get_queue?pid={_pid}&range=0,{QueuePage - 1}");
+    }
+
+    /// <summary>
+    /// The groups the players describe: those sharing a gid are one group, and the gid is
+    /// the leader's pid, so the leader belongs even on a device that leaves its own gid out.
+    /// The level shown is carried over so the slider does not blank, but it is asked for
+    /// again every time, since HEOS recomputes it whenever the membership changes.
+    /// </summary>
+    private void RebuildGroups(IReadOnlyList<HeosPlayer> players)
+    {
+        var previous = State.Groups;
+        var groups = new List<HeosGroup>();
+
+        foreach (var gid in players.Where(p => p.Gid is not null).Select(p => p.Gid!.Value).Distinct())
+        {
+            var members = players.Where(p => p.Gid == gid || p.Pid == gid).ToList();
+            if (members.Count < 2) continue;
+
+            var before = previous.FirstOrDefault(known => known.Gid == gid);
+            groups.Add(new HeosGroup
+            {
+                Gid = gid,
+                Name = string.Join(" + ", members.OrderBy(p => p.Pid == gid ? 0 : 1).Select(p => p.Name)),
+                Volume = before?.Volume,
+                Muted = before?.Muted ?? false,
+            });
+        }
+
+        State.Groups = groups;
+
+        foreach (var group in groups)
+        {
+            Command($"group/get_volume?gid={group.Gid}");
+            Command($"group/get_mute?gid={group.Gid}");
+        }
     }
 
     private void FetchMissingLevels(IEnumerable<HeosPlayer> players)
@@ -753,6 +826,28 @@ public sealed class HeosClient(string host, ILogger<HeosClient> log) : IAsyncDis
         int? newLevel = level is { } l ? (int)l : null;
         bool? newMute = mute is null ? null : mute == "on";
         Levels((int)pid, newLevel, newMute);
+    }
+
+    private void ApplyGroupLevels(string message)
+    {
+        if (Number(message, "gid") is not { } gid) return;
+
+        // As with a player: get_volume says level, get_mute says state, the event says mute.
+        var level = Number(message, "level");
+        var mute = Query(message, "mute") ?? Query(message, "state");
+
+        GroupLevels((int)gid, level is { } l ? (int)l : null, mute is null ? null : mute == "on");
+    }
+
+    private void GroupLevels(int gid, int? level, bool? muted)
+    {
+        var group = State.Groups.FirstOrDefault(known => known.Gid == gid);
+        if (group is null) return;
+
+        if (level is { } newLevel) group.Volume = newLevel;
+        if (muted is { } newMuted) group.Muted = newMuted;
+
+        StateChanged?.Invoke();
     }
 
     private void Levels(int pid, int? level, bool? muted)

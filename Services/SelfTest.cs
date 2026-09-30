@@ -1246,6 +1246,28 @@ public static class SelfTest
         Check("and its mute", heos.State.Players.First(p => p.Pid == 200).Muted);
         Check("without touching the selected player's", heos.State.Volume is null);
 
+        Check("the players that share a gid are one group",
+            heos.State.Groups.Count == 1 && heos.State.Groups[0].Gid == -100);
+        Check("named after its members, leader first",
+            heos.State.Groups[0].Name == "Living Room + Kitchen");
+        Check("and the lone player forms none",
+            heos.State.Groups.All(g => g.Gid != 300));
+        Check("the selected player's group is the one it leads",
+            heos.SelectedGroupLevels()?.Gid == -100);
+
+        heos.Handle("""{"heos":{"command":"event/group_volume_changed","message":"gid=-100&level=42&mute=on"}}""");
+        Check("the group's own level is tracked", heos.State.Groups[0].Volume == 42);
+        Check("and its mute", heos.State.Groups[0].Muted);
+        Check("without standing in for a member's",
+            heos.State.Players.First(p => p.Pid == 200).Volume == 35);
+
+        heos.Handle("""{"heos":{"command":"group/get_mute","result":"success","message":"gid=-100&state=off"}}""");
+        Check("a group's mute read says state where the event says mute",
+            heos.State.Groups[0].Muted == false && heos.State.Groups[0].Volume == 42);
+
+        heos.Handle("""{"heos":{"command":"event/group_volume_changed","message":"gid=-999&level=5"}}""");
+        Check("a group that is not there is ignored", heos.State.Groups.Count == 1);
+
         heos.Handle("""{"heos":{"command":"player/get_now_playing_media","result":"success","message":"pid=-100"}""" +
             ""","payload":{"type":"song","song":"Rock %26 Roll","artist":"A","sid":4,"qid":1}}""");
         Check("titles are decoded for display", heos.State.Song == "Rock & Roll");

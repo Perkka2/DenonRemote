@@ -21,6 +21,23 @@ public sealed class HeosPlayer
     public bool Muted { get; set; }
 }
 
+/// <summary>
+/// Players playing together. HEOS gives a group its leader's pid as the gid, so the
+/// group is known from the players themselves rather than asked for separately.
+/// </summary>
+public sealed class HeosGroup
+{
+    /// <summary>The leader's pid.</summary>
+    public int Gid { get; init; }
+
+    /// <summary>The members' own names, leader first.</summary>
+    public string Name { get; init; } = "";
+
+    /// <summary>The group's level, 0-100, which is its own and not any one member's.</summary>
+    public int? Volume { get; set; }
+    public bool Muted { get; set; }
+}
+
 public sealed record HeosQueueItem(int Qid, string? Song, string? Artist, string? Album, string? ImageUrl);
 
 /// <summary>A top-level source: a streaming service, the local library, playlists, inputs.</summary>
