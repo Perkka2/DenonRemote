@@ -9,6 +9,31 @@
     <section class="panel">
         <h2>Rooms</h2>
 
+        @* The group's own level, which HEOS keeps apart from the members' and moves them
+           by. One hand on the dial at a time: this sets the group and nothing else, the
+           rows below set a single room. If the receiver is a member its own volume moves
+           with the group, and the Remote tab shows that on the scale it uses. *@
+        @if (heos.SelectedGroupLevels() is { } whole)
+        {
+            <div class="room">
+                <div class="room-head">
+                    <span class="group-name">@whole.Name</span>
+                </div>
+
+                <div class="row-slider">
+                    <button class="pill @(whole.Muted ? "active" : "")" @onclick="() => heos.ToggleGroupMute(whole.Gid)">
+                        @(whole.Muted ? "Muted" : "Mute")
+                    </button>
+                    <input class="slider small"
+                           type="range" min="0" max="100" step="1"
+                           value="@((whole.Volume ?? 0).ToString(CultureInfo.InvariantCulture))"
+                           disabled="@(whole.Volume is null)"
+                           @onchange="(ChangeEventArgs args) => OnGroupVolume(heos, whole, args)" />
+                    <span class="level-value">@(whole.Volume?.ToString(CultureInfo.InvariantCulture) ?? "—")</span>
+                </div>
+            </div>
+        }
+
         @foreach (var player in state.Players)
         {
             var room = player;
@@ -85,5 +110,11 @@
     {
         if (int.TryParse(args.Value?.ToString(), NumberStyles.Integer, CultureInfo.InvariantCulture, out var level))
             heos.SetVolume(room.Pid, level);
+    }
+
+    private static void OnGroupVolume(HeosClient heos, HeosGroup group, ChangeEventArgs args)
+    {
+        if (int.TryParse(args.Value?.ToString(), NumberStyles.Integer, CultureInfo.InvariantCulture, out var level))
+            heos.SetGroupVolume(group.Gid, level);
     }
 }

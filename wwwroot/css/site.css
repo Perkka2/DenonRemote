@@ -611,6 +611,7 @@ select.text { appearance: none; }
 .room { display: flex; flex-direction: column; gap: 8px; padding: 8px 0; border-top: 1px solid var(--line); }
 .room:first-of-type { border-top: 0; }
 .room-head { display: flex; gap: 8px; flex-wrap: wrap; }
+.group-name { align-self: center; color: var(--dim); font-size: 13px; }
 
 .account-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
 .signin summary { color: var(--dim); font-size: 14px; cursor: pointer; }

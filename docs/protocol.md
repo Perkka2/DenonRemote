@@ -161,6 +161,7 @@ and lets the person pick which one to control.
 | Volume | `player/get_volume`, `set_volume?level=0-100`, `volume_up\|down?step=1-10`; `event/player_volume_changed` | `level`, `mute` in message |
 | Mute | `player/get_mute`, `set_mute?state=on\|off` | `state` in message |
 | Groups | `group/set_group?pid=leader,member,...`; a lone pid ungroups | `gid` on each player is its leader's pid |
+| Group volume | `group/get_volume\|set_volume?gid=&level=0-100`, `get_mute\|set_mute?gid=&state=on\|off`; `event/group_volume_changed` | `gid`, `level`, `mute` in message |
 | Sources | `browse/get_music_sources` | payload array of `sid`, `name`, `type`, `available` |
 | Browse | `browse/browse?sid=`, then `&cid=&range=0,49` | payload items: `container`, `playable`, `type`, `cid`, `mid`; `count`, `returned` in message |
 | Search | `browse/get_search_criteria?sid=`, `browse/search?sid=&search=&scid=&range=` | as browse |
@@ -182,6 +183,16 @@ from the control socket's, so the two fight; the app offers HEOS volume only for
 speaker or for another room, never for the receiver's own player. Searching a track in
 results that have no container id sends `add_to_queue` without `cid`, which the
 specification does not clearly allow.
+
+**Group volume** is a level of its own, not the members' averaged, and HEOS moves each
+member by it and reports every one back as an ordinary `player_volume_changed`. So the
+group fader sends `group/set_volume` and nothing else: sending that and the members' own
+levels would be two hands on the same dial. The fader is shown for any group, including
+one the receiver is in — its main zone then moves with the group, and the Remote tab
+shows that on the scale it uses, but only ever one of the two is written to at a time.
+Groups themselves are read off `get_players` rather than `group/get_groups`: a member's
+`gid` is its leader's `pid`, so the players sharing one are the group, and there is no
+second account of the membership to keep in step.
 
 ### HEOS-only devices
 
