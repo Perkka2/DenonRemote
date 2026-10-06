@@ -4,11 +4,11 @@
 #   ./publish.sh              all targets
 #   ./publish.sh osx-arm64    just one
 #
-# Each zip holds a folder: the executable, the .NET runtime beside it, wwwroot and
-# appsettings.json. Nothing needs installing on the target machine.
+# Each zip holds a folder: a single executable with the .NET runtime inside it,
+# wwwroot and appsettings.json. Nothing needs installing on the target machine.
 #
-# Deliberately not single-file: bundling the native libraries makes the app extract
-# them at startup, which crashed on macOS inside a socket call.
+# Native libraries are linked into the executable, never extracted at startup:
+# extracting them crashed on macOS inside a socket call.
 set -euo pipefail
 
 cd "$(dirname "$0")"
@@ -27,7 +27,7 @@ for rid in "${TARGETS[@]}"; do
     echo "==> $rid"
     out="dist/DenonRemote-$rid"
 
-    dotnet publish -c Release -r "$rid" -o "$out" --nologo --self-contained
+    dotnet publish -c Release -r "$rid" -o "$out" --nologo --self-contained -p:PublishSingleFile=true
 
     rm -f "$out"/*.pdb
 

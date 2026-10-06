@@ -10,10 +10,11 @@
     <Product>Denon Remote</Product>
     <AssemblyName>DenonRemote</AssemblyName>
 
-    <!-- Publishing is self-contained but NOT single-file. Bundling the native
-         libraries means extracting them at startup, and on macOS that produced an
-         access violation inside a socket P/Invoke. A folder of files is boring and
-         works. Trimming stays off too: Blazor leans on reflection. -->
+    <!-- Publishing is self-contained and single-file (both on the publish command).
+         The runtime's native libraries are linked into the executable rather than
+         extracted at startup - extracting them is what produced an access violation
+         inside a socket P/Invoke on macOS, so IncludeNativeLibrariesForSelfExtract
+         stays off. Trimming stays off too: Blazor leans on reflection. -->
     <PublishTrimmed>false</PublishTrimmed>
 
     <!-- Everything is formatted with InvariantCulture, so ICU isn't needed. -->

@@ -59,7 +59,7 @@ endpoints, including the real captured setup pages from both receivers.
 ./publish.sh osx-arm64       # just one
 ```
 
-Each zip holds a folder: the executable with the .NET runtime beside it, `wwwroot` and
+Each zip holds a folder: a single executable with the .NET runtime inside it, `wwwroot` and
 `appsettings.json`. The recipient installs nothing. About 90 MB per platform. Targets:
 `osx-arm64`, `osx-x64`, `win-x64`, `win-arm64`, `linux-x64`, `linux-arm64`.
 
@@ -72,10 +72,11 @@ git tag v1.0.0 && git push origin v1.0.0
 
 Three deliberate choices in there:
 
-* **Not single-file.** Bundling the native libraries makes the app extract them to a
-  temp directory at startup, and on macOS that produced an `AccessViolationException`
-  inside a socket call before the app could start. A plain folder is larger, boring,
-  and works.
+* **Single-file, without native self-extract.** The runtime's native libraries are
+  linked into the executable, so there are no loose `.dylib`/`.dll` files for
+  Gatekeeper to quarantine one by one. `IncludeNativeLibrariesForSelfExtract` stays
+  off: extracting them to a temp directory at startup produced an
+  `AccessViolationException` inside a socket call on macOS.
 * **No trimming.** Blazor's reflection doesn't survive it.
 * **`--self-contained` on the publish command**, not in the csproj, so `dotnet run`
   stays fast during development.
