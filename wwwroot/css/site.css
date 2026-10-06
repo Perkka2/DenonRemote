@@ -336,7 +336,15 @@ html, body {
 
 /* ---------------------------------------------------------------- sections */
 
-.sections { display: flex; gap: 14px; border-bottom: 1px solid var(--line); }
+.sections { display: flex; flex-wrap: wrap; column-gap: 14px; row-gap: 2px; border-bottom: 1px solid var(--line); }
+.sections .ztab { white-space: nowrap; }
+
+/* Every section at once is wider than a phone, so the tabs tighten up and wrap
+   onto a second row rather than running off the side of the screen. */
+@media (max-width: 480px) {
+    .sections { column-gap: 12px; }
+    .sections .ztab { font-size: 14px; }
+}
 
 .panel.tight { gap: 10px; }
 
