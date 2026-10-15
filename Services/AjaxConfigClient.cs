@@ -38,10 +38,10 @@ public sealed class AjaxConfigClient(HttpProbe probe, ILogger<AjaxConfigClient> 
         await ReadAsync(host, "general", 1, ct) is not null;
 
     public async Task<bool> WriteAsync(
-        string host, string section, int type, string root, string leaf, string? index, string value,
-        CancellationToken ct)
+        string host, string section, int type, string root, ConfigRow row, string value, CancellationToken ct)
     {
-        var url = Url(host, section, "set", type) + "&data=" + Uri.EscapeDataString(BuildWrite(root, leaf, index, value));
+        var url = Url(host, section, "set", type) + "&data="
+            + Uri.EscapeDataString(BuildWrite(root, row.Path, row.Name, row.Index, value));
 
         var result = await probe.SendAsync("GET", url, null, ct);
         var ok = result.Error is null && result.Status is >= 200 and < 300;
@@ -51,14 +51,46 @@ public sealed class AjaxConfigClient(HttpProbe probe, ILogger<AjaxConfigClient> 
     }
 
     /// <summary>
-    /// The setup UI wraps the value in its tag, then in the document's root tag. An
-    /// indexed setting - one speaker of several, one input of several - carries the
-    /// index as an attribute, which is how the UI's own writes identify which one.
+    /// Documents whose root tag the setup UI's own writes repeat. Everywhere else it
+    /// sends the bare tag, and the receiver holds it to that: a zone setup write
+    /// wrapped in &lt;ZoneSetup&gt; answers 200 and changes nothing, and ECO wrapped in
+    /// &lt;ECO&gt; answers 501.
     /// </summary>
-    public static string BuildWrite(string root, string leaf, string? index, string value)
+    private static readonly HashSet<string> RootWrapped = new(StringComparer.Ordinal) { "AmpAssign", "AutoStandby" };
+
+    /// <summary>
+    /// Groups the UI names in a nested setting's write: ECO's per-zone timers go out as
+    /// &lt;AutoStandby&gt;&lt;MainZone&gt;. Any other group is left out, as the UI leaves it.
+    /// </summary>
+    private static readonly HashSet<string> KeptGroups = new(StringComparer.Ordinal) { "AutoStandby", "AnalogVideoOut" };
+
+    /// <summary>
+    /// Groups that are really one switch: Firmware's AllowUpdate holds nothing but an
+    /// Enable, and the UI writes &lt;AllowUpdate&gt;1&lt;/AllowUpdate&gt; rather than
+    /// naming the Enable inside it.
+    /// </summary>
+    private static readonly HashSet<string> SwitchGroups = new(StringComparer.Ordinal)
+        { "AllowUpdate", "AutoUpdate", "UpgradeNotification" };
+
+    /// <summary>
+    /// The setup UI wraps the value in its tag, then in whichever of its groups it
+    /// names, and for a few documents in the root tag as well. An indexed setting -
+    /// one speaker of several, one input of several - carries the index as an
+    /// attribute, which is how the UI's own writes identify which one.
+    /// </summary>
+    public static string BuildWrite(
+        string root, IReadOnlyList<string> parents, string leaf, string? index, string value)
     {
+        if (leaf == "Enable" && parents.Count > 0 && SwitchGroups.Contains(parents[^1]))
+            (leaf, parents) = (parents[^1], parents.Take(parents.Count - 1).ToList());
+
         var attribute = index is null ? "" : $" index=\"{WebUtility.HtmlEncode(index)}\"";
-        return $"<{root}><{leaf}{attribute}>{WebUtility.HtmlEncode(value)}</{leaf}></{root}>";
+        var xml = $"<{leaf}{attribute}>{WebUtility.HtmlEncode(value)}</{leaf}>";
+
+        foreach (var group in parents.Where(KeptGroups.Contains).Reverse())
+            xml = $"<{group}>{xml}</{group}>";
+
+        return RootWrapped.Contains(root) ? $"<{root}>{xml}</{root}>" : xml;
     }
 
     /// <summary>
@@ -100,14 +132,14 @@ public sealed class AjaxConfigClient(HttpProbe probe, ILogger<AjaxConfigClient> 
         }
 
         var rows = new List<ConfigRow>();
-        Walk(root, "", null, rows, shared, vocabulary);
+        Walk(root, "", null, [], rows, shared, vocabulary);
         return rows;
     }
 
     private static readonly string[] ValueNames = ["Value", "Source"];
 
     private static void Walk(
-        XElement element, string prefix, string? inheritedIndex,
+        XElement element, string prefix, string? inheritedIndex, IReadOnlyList<string> parents,
         List<ConfigRow> rows, IReadOnlyList<ConfigChoice> shared,
         IReadOnlyDictionary<string, IReadOnlyList<ConfigChoice>>? vocabulary = null)
     {
@@ -155,7 +187,10 @@ public sealed class AjaxConfigClient(HttpProbe probe, ILogger<AjaxConfigClient> 
 
             if (others.Count > 0 && !enumeration && ownCodes.Count == 0)
             {
-                Walk(child, label, index, rows, shared, vocabulary);
+                // An indexed container is a row, and its index travels with the write;
+                // a named one is a group, and its tag may be part of the write's path.
+                var path = child.Attribute("index") is null ? [.. parents, name] : parents;
+                Walk(child, label, index, path, rows, shared, vocabulary);
                 continue;
             }
 
@@ -174,11 +209,11 @@ public sealed class AjaxConfigClient(HttpProbe probe, ILogger<AjaxConfigClient> 
             var value = (valueChild?.Value ?? child.Value).Trim();
             if (value.Length == 0 && options.Count == 0) continue;
 
-            rows.Add(new ConfigRow(name, label, value, options, index, locked));
+            rows.Add(new ConfigRow(name, label, value, options, index, locked, Parents: parents));
 
             // Rows nested inside a plain List, as the per-speaker crossovers are.
             if (!enumeration && ownCodes.Count == 0 && lists.Count == 1)
-                Walk(lists[0], label, index, rows, shared, vocabulary);
+                Walk(lists[0], label, index, parents, rows, shared, vocabulary);
         }
     }
 }

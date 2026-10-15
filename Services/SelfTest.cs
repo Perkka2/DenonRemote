@@ -603,6 +603,20 @@ public static class SelfTest
         Check("nor are digits", AjaxUiReader.Name("CONFIG_ZONE2SETUP", byName) == "ZONE2 Setup");
         Check("an unknown one keeps something readable",
             AjaxUiReader.Name("CONFIG_SPEAKER_LAYOUT", byName) == "Speaker Layout");
+        var naming = AjaxUiReader.Naming.From(
+            ["Network/Crestron Connected", "Quick Select Names", "General/Quick Select", "Setup Options", "HDMI Setup"]);
+        Check("a breadcrumb names a screen",
+            AjaxUiReader.Name("CONFIG_CRESTRONCONNECTED", naming) == "Crestron Connected");
+        Check("a run-together name is split into the table's words",
+            AjaxUiReader.Name("CONFIG_QUICKSELECTOPTIONS", naming) == "Quick Select Options");
+        Check("in the table's own casing",
+            AjaxUiReader.Name("CONFIG_HDMISETUPOPTIONS", naming) == "HDMI Setup Options");
+        Check("a word the table lacks stays readable",
+            AjaxUiReader.Name("CONFIG_BRAND_NEWTHING", naming) == "Brand Newthing");
+        Check("the receiver's own misspelling is read as meant",
+            AjaxUiReader.Name("CONFIG_SETUP_SETTIMGS", AjaxUiReader.Naming.From(["Setup", "Settings"])) == "Setup Settings");
+        Check("a word only written lower case is capitalised",
+            AjaxUiReader.Name("CONFIG_SETUPLOG", AjaxUiReader.Naming.From(["Setup", "see the log"])) == "Setup Log");
         Check("normalising ignores case, spaces and punctuation",
             AjaxUiReader.Normalise("Speaker Config.") == AjaxUiReader.Normalise("SPEAKERCONFIG"));
 
@@ -901,6 +915,30 @@ public static class SelfTest
         client.SetDynamicEq(true);
         Check("a change is followed by its query",
             client.Pending.Count == 2 && client.Pending[0] == "PSDYNEQ ON" && client.Pending[1] == "PSDYNEQ ?");
+
+        // Zone 2 has no half steps.
+        Check("zone 2 volume rounds to whole steps",
+            Sent(client, () => client.SetZoneVolume(2, 30.5)) is "Z230" or "Z231");
+
+        // A drag: the receiver answers each position late, after the user has moved on.
+        client.ClearPending();
+        Feed(client, "MV40");
+        client.SetZoneVolume(1, 41);
+        client.SetZoneVolume(1, 45);
+        Check("a drag coalesces to its latest position",
+            client.Pending.Count(c => c.StartsWith("MV") && c != "MV?") == 1 && client.Pending.Contains("MV45"));
+        Feed(client, "MV41");
+        Check("a late echo doesn't pull the slider back", client.State.Main.Volume == 45);
+        Feed(client, "MV45");
+        Check("the echo of the target settles it", client.State.Main.Volume == 45);
+        Feed(client, "MV30");
+        Check("a change made elsewhere still shows", client.State.Main.Volume == 30);
+
+        // Stepping from a known volume is an absolute target, so taps coalesce too.
+        client.ClearPending();
+        client.StepZoneVolume(1, 1);
+        client.StepZoneVolume(1, 1);
+        Check("two taps send one absolute volume", client.Pending.Contains("MV31") && !client.Pending.Contains("MVUP"));
     }
 
     private static void GraphicEqPayloads()
@@ -996,12 +1034,41 @@ public static class SelfTest
         Check("greyed settings are not editable", greyed?.Editable == false);
 
         // Writes, including the indexed form the receiver's own UI uses.
-        Check("plain write shape",
-            AjaxConfigClient.BuildWrite("HDMISetup", "HDMIControl", null, "2")
-                == "<HDMISetup><HDMIControl>2</HDMIControl></HDMISetup>");
+        Check("plain write is the bare tag",
+            AjaxConfigClient.BuildWrite("HDMISetup", [], "HDMIControl", null, "2")
+                == "<HDMIControl>2</HDMIControl>");
+        Check("zone setup write is not wrapped in its root",
+            AjaxConfigClient.BuildWrite("ZoneSetup", [], "VolumeLevel", null, "99")
+                == "<VolumeLevel>99</VolumeLevel>");
+        Check("amp assign keeps its root, as the UI sends it",
+            AjaxConfigClient.BuildWrite("AmpAssign", [], "AssignMode", null, "2")
+                == "<AmpAssign><AssignMode>2</AssignMode></AmpAssign>");
+        Check("ECO's zone timers keep their group",
+            AjaxConfigClient.BuildWrite("ECO", ["AutoStandby"], "MainZone", null, "4")
+                == "<AutoStandby><MainZone>4</MainZone></AutoStandby>");
+        Check("a firmware switch is written as its group",
+            AjaxConfigClient.BuildWrite("Firmware", ["AllowUpdate"], "Enable", null, "2")
+                == "<AllowUpdate>2</AllowUpdate>");
+        Check("a setting beside the switch is written bare",
+            AjaxConfigClient.BuildWrite("Firmware", ["AutoUpdate"], "TimeZone", null, "28")
+                == "<TimeZone>28</TimeZone>");
+        var ecoRows = AjaxConfigClient.Flatten(XDocument.Parse("""
+            <ECO><Mode display="3">3</Mode><AutoStandby group="2"><MainZone display="3">4</MainZone></AutoStandby></ECO>
+            """));
+        Check("a nested row knows its group",
+            ecoRows.Single(r => r.Name == "MainZone").Path.SequenceEqual(["AutoStandby"]));
+        var sourceRows = AjaxConfigClient.Flatten(XDocument.Parse("""
+            <InputAssign><Source index="1"><HDMI>2</HDMI><Digital>1</Digital></Source></InputAssign>
+            """));
+        Check("an indexed row is not a group",
+            sourceRows.All(r => r.Path.Count == 0 && r.Index == "1"));
         Check("indexed write carries the index",
-            AjaxConfigClient.BuildWrite("SpeakerConfig", "Speaker", "0", "3")
-                == "<SpeakerConfig><Speaker index=\"0\">3</Speaker></SpeakerConfig>");
+            AjaxConfigClient.BuildWrite("SpeakerConfig", [], "Speaker", "0", "3")
+                == "<Speaker index=\"0\">3</Speaker>");
+        Check("zone volume level offers Variable",
+            AjaxLabels.Choices("general", 4, "VolumeLevel").Any(c => c.Key == "99" && c.Value == "Variable"));
+        Check("zone channel trim codes are bare numbers",
+            AjaxLabels.Choices("general", 4, "LchLevel").Any(c => c.Key == "0"));
 
         // Each speaker says what it will accept, and they differ: no centre speaker
         // option for the fronts, yes/no for the subwoofer.

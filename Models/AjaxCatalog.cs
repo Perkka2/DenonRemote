@@ -50,8 +50,15 @@ public sealed record ConfigRow(
     string? Index,
     bool Locked,
     string? Field = null,
-    string? Arm = null)
+    string? Arm = null,
+    IReadOnlyList<string>? Parents = null)
 {
+    /// <summary>
+    /// The named groups between the document's root and this setting - AutoStandby for
+    /// the ECO screen's per-zone timers. Indexed rows and List wrappers are not groups.
+    /// </summary>
+    public IReadOnlyList<string> Path => Parents ?? [];
+
     /// <summary>
     /// What a write names this setting. Usually the same as <see cref="Name"/>, but
     /// in a table Name is the column heading - "HDMI" - shared by every row, while

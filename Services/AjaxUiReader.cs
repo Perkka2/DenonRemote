@@ -86,14 +86,7 @@ public sealed partial class AjaxUiReader(ILogger<AjaxUiReader> log)
         if (words.Count == 0) return [];
 
         var groups = new List<ConfigGroup>();
-
-        // A string is only usable as a name if exactly one reads back to it; two
-        // settings that normalise alike would be a coin toss between them.
-        var byName = words.Values
-            .Where(v => Normalise(v).Length > 0)
-            .GroupBy(Normalise)
-            .Where(g => g.Distinct(StringComparer.Ordinal).Count() == 1)
-            .ToDictionary(g => g.Key, g => g.First(), StringComparer.Ordinal);
+        var naming = Naming.From(words.Values);
 
         foreach (var (section, prefix) in Sections)
         {
@@ -107,7 +100,7 @@ public sealed partial class AjaxUiReader(ILogger<AjaxUiReader> log)
             var order = settings is null ? [] : Menu(settings);
 
             foreach (var constant in Order(types.Keys, order))
-                groups.Add(new ConfigGroup(section, types[constant], Name(constant, byName)));
+                groups.Add(new ConfigGroup(section, types[constant], Name(constant, naming)));
         }
 
         return groups;
@@ -141,10 +134,105 @@ public sealed partial class AjaxUiReader(ILogger<AjaxUiReader> log)
     /// them. Anything it cannot name keeps the receiver's own constant, which is
     /// ugly but true.
     /// </summary>
-    internal static string Name(string constant, IReadOnlyDictionary<string, string> byName)
+    internal static string Name(string constant, IReadOnlyDictionary<string, string> byName) =>
+        Name(constant, new Naming(byName, new Dictionary<string, string>(), new Dictionary<string, string>()));
+
+    /// <summary>
+    /// Two fallbacks for a constant the table doesn't name outright. Some screens are
+    /// only named in their breadcrumb - "Network/Crestron Connected" - so the last
+    /// step of one counts too. Failing that, the constant is split back into words
+    /// the table does use: QUICKSELECTOPTIONS is in no string, but Quick, Select and
+    /// Options all are. Anything that won't split keeps the constant, readably.
+    /// </summary>
+    internal static string Name(string constant, Naming naming)
     {
         var bare = constant.StartsWith("CONFIG_", StringComparison.Ordinal) ? constant[7..] : constant;
-        return byName.TryGetValue(Normalise(bare), out var word) ? word : Readable(bare);
+        var key = Normalise(bare);
+
+        if (naming.Whole.TryGetValue(key, out var whole)) return whole;
+        if (naming.Tails.TryGetValue(key, out var tail)) return tail;
+
+        var chunks = bare.Split('_', StringSplitOptions.RemoveEmptyEntries)
+            .Select(chunk => Split(Misspelt.GetValueOrDefault(Normalise(chunk), Normalise(chunk)), naming.Words)
+                             ?? Readable(chunk));
+        return string.Join(' ', chunks);
+    }
+
+    /// <summary>Constants the receiver's own code misspells, so no word in its table matches.</summary>
+    private static readonly Dictionary<string, string> Misspelt = new(StringComparer.Ordinal)
+    {
+        ["SURRONDPARAMETER"] = "SURROUNDPARAMETER",
+        ["SETTIMGS"] = "SETTINGS",
+    };
+
+    /// <summary>The string table, arranged for naming screens.</summary>
+    internal sealed record Naming(
+        IReadOnlyDictionary<string, string> Whole,
+        IReadOnlyDictionary<string, string> Tails,
+        IReadOnlyDictionary<string, string> Words)
+    {
+        public static Naming From(IEnumerable<string> labels)
+        {
+            var all = labels.Where(l => Normalise(l).Length > 0).ToList();
+
+            return new Naming(
+                Unique(all),
+                Unique(all.Where(l => l.Contains('/') && l.Length < 60).Select(l => l[(l.LastIndexOf('/') + 1)..].Trim())),
+                // Each word as the table most often writes it in a title - HDMI, Quick,
+                // Select - since mid-sentence it is "options", and a tile is a title.
+                all.SelectMany(l => WordSplit().Split(l))
+                    .Where(w => w.Length > 1 || (w.Length == 1 && char.IsDigit(w[0])))
+                    .GroupBy(Normalise)
+                    .Where(g => g.Key.Length > 0)
+                    .ToDictionary(g => g.Key, g => TitleForm(g), StringComparer.Ordinal));
+        }
+
+        private static string TitleForm(IEnumerable<string> forms)
+        {
+            var common = forms.GroupBy(w => w, StringComparer.Ordinal)
+                .OrderByDescending(c => c.Count())
+                .Select(c => c.Key)
+                .ToList();
+            var titled = common.FirstOrDefault(w => !char.IsLower(w[0]));
+            return titled ?? char.ToUpperInvariant(common[0][0]) + common[0][1..];
+        }
+
+        // A string is only usable as a name if exactly one reads back to it; two
+        // settings that normalise alike would be a coin toss between them.
+        private static Dictionary<string, string> Unique(IEnumerable<string> labels) =>
+            labels
+                .Where(v => Normalise(v).Length > 0)
+                .GroupBy(Normalise)
+                .Where(g => g.Distinct(StringComparer.Ordinal).Count() == 1)
+                .ToDictionary(g => g.Key, g => g.First(), StringComparer.Ordinal);
+    }
+
+    /// <summary>
+    /// The fewest known words that spell <paramref name="run"/> exactly, or null when
+    /// it can't be spelled from them at all.
+    /// </summary>
+    internal static string? Split(string run, IReadOnlyDictionary<string, string> words)
+    {
+        if (run.Length == 0 || words.Count == 0) return null;
+
+        // best[i]: the fewest words spelling the first i characters, and where the last began.
+        var best = new (int Count, int From)[run.Length + 1];
+        Array.Fill(best, (int.MaxValue, -1));
+        best[0] = (0, 0);
+
+        for (var end = 1; end <= run.Length; end++)
+            for (var start = Math.Max(0, end - 24); start < end; start++)
+            {
+                if (best[start].Count == int.MaxValue || best[start].Count + 1 >= best[end].Count) continue;
+                if (words.ContainsKey(run[start..end])) best[end] = (best[start].Count + 1, start);
+            }
+
+        if (best[run.Length].Count == int.MaxValue) return null;
+
+        var spelled = new List<string>();
+        for (var end = run.Length; end > 0; end = best[end].From)
+            spelled.Insert(0, words[run[best[end].From..end]]);
+        return string.Join(' ', spelled);
     }
 
     internal static string Normalise(string text)
@@ -267,4 +355,7 @@ public sealed partial class AjaxUiReader(ILogger<AjaxUiReader> log)
 
     [GeneratedRegex(@"\\(.)")]
     private static partial Regex Escape();
+
+    [GeneratedRegex(@"[^A-Za-z0-9]+")]
+    private static partial Regex WordSplit();
 }

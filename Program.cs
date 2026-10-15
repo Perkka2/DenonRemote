@@ -25,6 +25,7 @@ if (options.ReadUi is { } uiDir)
 {
     var words = AjaxUiReader.Strings(await File.ReadAllTextAsync(Path.Combine(uiDir, "LanguageStrings.js")));
     Console.WriteLine($"  {words.Count} strings\n");
+    var naming = AjaxUiReader.Naming.From(words.Values);
 
     foreach (var (path, file) in AjaxUiReader.Captured())
     {
@@ -34,15 +35,10 @@ if (options.ReadUi is { } uiDir)
 
         var types = AjaxUiReader.Types(await File.ReadAllTextAsync(iface));
         var menu = AjaxUiReader.Menu(await File.ReadAllTextAsync(settings));
-        var byName = words.Values
-            .Where(v => AjaxUiReader.Normalise(v).Length > 0)
-            .GroupBy(AjaxUiReader.Normalise)
-            .Where(g => g.Distinct(StringComparer.Ordinal).Count() == 1)
-            .ToDictionary(g => g.Key, g => g.First(), StringComparer.Ordinal);
 
         Console.WriteLine($"=== {path}: {types.Count} settings");
         foreach (var constant in AjaxUiReader.Order(types.Keys, menu))
-            Console.WriteLine($"    {types[constant],3}  {AjaxUiReader.Name(constant, byName)}");
+            Console.WriteLine($"    {types[constant],3}  {AjaxUiReader.Name(constant, naming)}");
         Console.WriteLine();
     }
     return 0;

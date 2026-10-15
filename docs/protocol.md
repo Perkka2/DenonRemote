@@ -62,6 +62,18 @@ GET /ajax/{section}/get_config?type={n}
 GET /ajax/{section}/set_config?type={n}&data={url-encoded XML}
 ```
 
+A write's `data` is the bare setting tag — `<VolumeLevel>99</VolumeLevel>`, with an
+`index` attribute for one row of several — not wrapped in the document's root. Only
+`AmpAssign` and `AutoStandby` repeat their root, because the UI does. Wrapped anyway, a
+zone setup write answers 200 and changes nothing, and ECO answers 501.
+
+Nested settings follow the UI too. An indexed parent (`<Source index="1">`) is a row:
+its index goes on the leaf and its tag is dropped, as is any `List` wrapper. Of the
+named groups, `AutoStandby` and `AnalogVideoOut` stay in the path
+(`<AutoStandby><MainZone>3</MainZone></AutoStandby>` — the bare `<MainZone>` gets a
+501), and Firmware's `AllowUpdate`/`AutoUpdate`/`UpgradeNotification` are written as
+the group itself in place of the `Enable` inside them.
+
 Sections are `audio`, `video`, `inputs`, `speakers`, `network`, `general`, `control`,
 `advanced` and `home`. The type numbers are not guessed: the receiver's own UI declares
 them, and the app reads that rather than keeping a list here.

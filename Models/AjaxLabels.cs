@@ -115,6 +115,35 @@ public static class AjaxLabels
         ["video/9/TVFormat"] = new("Format", new Dictionary<string, string> { ["1"] = "NTSC", ["2"] = "PAL" }),
     };
 
+    /// <summary>
+    /// Hand-written, and consulted before <see cref="Fields"/>, which is regenerated
+    /// from a harvest. These are rows the harvest got wrong or never saw: the zone
+    /// setup builds its volume lists in script rather than in markup, and lists its
+    /// channel trims as "+3dB" where the document reports and takes the bare number.
+    /// </summary>
+    public static readonly Dictionary<string, FieldLabels> Corrections = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ["general/4/LchLevel"] = new("Lch Level", ChannelTrims()),
+        ["general/4/RchLevel"] = new("Rch Level", ChannelTrims()),
+        ["general/4/VolumeLevel"] = new("Volume Level", ZoneVolumes(("99", "Variable"))),
+        ["general/4/VolumeLimit"] = new("Volume Limit", new Dictionary<string, string> { ["1"] = "Off", ["2"] = "-20dB", ["3"] = "-10dB", ["4"] = "0dB" }),
+        ["general/4/PowerOnVolume"] = new("Power On Level", ZoneVolumes(("99", "Last"), ("0", "Mute"))),
+    };
+
+    private static Dictionary<string, string> ChannelTrims() =>
+        Enumerable.Range(-12, 25).ToDictionary(n => n.ToString(), n => (n > 0 ? "+" : "") + n + "dB");
+
+    /// <summary>
+    /// A zone's volume as its setup screen offers it: the special codes first, then
+    /// 1..98 on the receiver's scale, shown in dB.
+    /// </summary>
+    private static Dictionary<string, string> ZoneVolumes(params (string Code, string Text)[] special)
+    {
+        var values = special.ToDictionary(s => s.Code, s => s.Text);
+        for (var n = 1; n <= 98; n++) values[n.ToString()] = (n - 80) + "dB";
+        return values;
+    }
+
     /// <summary>Names for indexed rows: which speaker or input each index is.</summary>
     public static readonly Dictionary<string, string> RowNames = new(StringComparer.OrdinalIgnoreCase)
     {
@@ -172,6 +201,7 @@ public static class AjaxLabels
     /// <summary>The row's own entry if there is one, otherwise the field's.</summary>
     public static FieldLabels? For(string section, int type, string tag, string? index = null)
     {
+        if (Corrections.TryGetValue($"{section}/{type}/{tag}", out var corrected)) return corrected;
         if (index is not null && Fields.TryGetValue($"{section}/{type}/{tag}/{index}", out var row)) return row;
         return Fields.TryGetValue($"{section}/{type}/{tag}", out var field) ? field : null;
     }

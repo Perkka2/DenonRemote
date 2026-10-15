@@ -129,7 +129,7 @@
                     <span>@Label(current)</span>
                     @if (choices.Count > 0 && !current.Locked)
                     {
-                        <select class="text" value="@current.Value" @key="(reads, current.Name, current.Index)"
+                        <select class="text" value="@current.Value" @key="(reads, Key(current))"
                                 @onchange="args => WriteAsync(current, args)">
                             @foreach (var choice in choices)
                             {
@@ -144,7 +144,7 @@
                            like settings the app had given up on. *@
                         <span class="valued">
                             <input class="text narrow" value="@current.Value"
-                                   @key="(reads, current.Name, current.Index)"
+                                   @key="(reads, Key(current))"
                                    @onchange="args => Typed(current, args)" />
                             <button class="pill" @onclick="() => SetAsync(current)">Set</button>
                         </span>
@@ -197,7 +197,10 @@
     private void Typed(ConfigRow row, ChangeEventArgs args) =>
         typed[Key(row)] = args.Value?.ToString() ?? "";
 
-    private static string Key(ConfigRow row) => row.Name + "/" + (row.Index ?? "");
+    /// <summary>A row's identity. Nested rows can share a tag - Firmware has three Enables -
+    /// so the groups they sit in are part of it.</summary>
+    private static string Key(ConfigRow row) =>
+        string.Join("/", [.. row.Path, row.Name]) + "#" + (row.Index ?? "");
 
     private ConfigGroup? open;
     private IReadOnlyList<ConfigRow> rows = [];
@@ -458,7 +461,7 @@
         // whose bound value it thinks is unchanged, so the control would sit there
         // showing the value the receiver just declined: make them new elements instead.
         reads++;
-        var after = rows.FirstOrDefault(r => r.Name == row.Name && r.Index == row.Index);
+        var after = rows.FirstOrDefault(r => Key(r) == Key(row));
 
         message = !ok ? $"{what} was refused by the receiver."
             : after?.Value == value ? $"{what} set to {shown}."

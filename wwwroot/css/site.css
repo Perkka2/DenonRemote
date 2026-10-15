@@ -259,8 +259,15 @@ html, body {
     padding: 14px 8px;
     font-size: 14px;
     font-weight: 500;
+    line-height: 1.25;
     cursor: pointer;
     transition: background .1s, color .1s, border-color .1s;
+    /* Menu names come from the receiver and some are one long word. A grid item
+       otherwise refuses to shrink below that word and the text spills out. Words
+       wrap whole; one is only broken when it can't fit a line on its own (no
+       hyphens: auto, which splits words just to fill a line). */
+    min-width: 0;
+    overflow-wrap: break-word;
 }
 
 .tile:active { background: var(--accent-soft); }

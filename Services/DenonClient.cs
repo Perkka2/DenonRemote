@@ -440,17 +440,69 @@ public sealed class DenonClient : IAsyncDisposable
     public double EffectiveMax =>
         Math.Min(NightMode ? Config.Settings.NightMaxVolume : Config.Settings.MaxVolume, State.VolumeMax);
 
+    /// <summary>Main zone volume moves in half steps; the other zones only in whole ones.</summary>
+    public static double VolumeStep(int zone) => zone == 1 ? 0.5 : 1;
+
+    /// <summary>
+    /// How long a volume the app asked for outranks what the receiver reports. Each
+    /// position of a drag is answered a few hundred ms late, so without this those
+    /// answers pull the slider back through positions the user has already left.
+    /// </summary>
+    private static readonly TimeSpan VolumeSettle = TimeSpan.FromSeconds(1.5);
+
+    private sealed record VolumeTarget(double Value, DateTimeOffset At);
+
+    private readonly Dictionary<int, VolumeTarget> _volumeTargets = new();
+    private readonly Dictionary<int, double> _reportedVolumes = new();
+
     public void SetZoneVolume(int zone, double value)
     {
-        value = Math.Clamp(value, 0, EffectiveMax);
-        var previous = State.Zone(zone).Volume;
+        var step = VolumeStep(zone);
+        value = Math.Clamp(Math.Round(value / step) * step, 0, EffectiveMax);
         State.Zone(zone).Volume = value;
+        lock (_gate) _volumeTargets[zone] = new VolumeTarget(value, DateTimeOffset.Now);
         Touch();
         SendVerified($"Z{zone}VOL", $"Zone {zone} volume",
             (zone == 1 ? "MV" : ZonePrefix(zone)) + EncodeVolume(value),
             EncodeVolume(value),
             zone == 1 ? "MV?" : $"{ZonePrefix(zone)}?",
-            () => State.Zone(zone).Volume = previous);
+            () => RevertVolume(zone));
+    }
+
+    /// <summary>
+    /// Nothing confirmed the volume in time: show what the receiver last said, not the
+    /// previous drag position. A zone at a fixed output level is the usual cause -
+    /// it reports its volume but ignores every attempt to change it.
+    /// </summary>
+    private void RevertVolume(int zone)
+    {
+        lock (_gate)
+        {
+            _volumeTargets.Remove(zone);
+            if (_reportedVolumes.TryGetValue(zone, out var reported)) State.Zone(zone).Volume = reported;
+        }
+    }
+
+    /// <summary>A volume the receiver reported, unless it is an echo the user has since moved past.</summary>
+    private bool HandleVolume(int zone, string text)
+    {
+        if (!TryVolume(text, out var volume)) return false;
+
+        lock (_gate)
+        {
+            _reportedVolumes[zone] = volume;
+            if (_volumeTargets.TryGetValue(zone, out var target))
+            {
+                var stale = Math.Abs(target.Value - volume) >= 0.01
+                            && DateTimeOffset.Now - target.At < VolumeSettle;
+                if (stale) return false;
+                _volumeTargets.Remove(zone);
+            }
+        }
+
+        Confirm($"Z{zone}VOL", text);
+        State.Zone(zone).Volume = volume;
+        return true;
     }
 
     public void StepZoneVolume(int zone, int direction)
@@ -465,10 +517,12 @@ public sealed class DenonClient : IAsyncDisposable
             return;
         }
 
+        // From a known volume, a step is an absolute target: rapid taps then coalesce
+        // into one command and their late echoes can't walk the readout backwards.
         if (current is not null)
         {
-            State.Zone(zone).Volume = Math.Clamp(current.Value + (direction > 0 ? 0.5 : -0.5), 0, EffectiveMax);
-            Touch();
+            SetZoneVolume(zone, current.Value + (direction > 0 ? 1 : -1) * VolumeStep(zone));
+            return;
         }
 
         Send(zone == 1
@@ -761,8 +815,7 @@ public sealed class DenonClient : IAsyncDisposable
     }
 
     public Task<bool> WriteConfigAsync(ConfigGroup group, string root, ConfigRow row, string value) =>
-        _ajax.WriteAsync(Config.Host, group.Section, group.Type, root, row.Name, row.Index, value,
-            CancellationToken.None);
+        _ajax.WriteAsync(Config.Host, group.Section, group.Type, root, row, value, CancellationToken.None);
 
     // Sleep, night mode, menu -------------------------------------------
 
@@ -1070,10 +1123,7 @@ public sealed class DenonClient : IAsyncDisposable
         else if (line.StartsWith("MVMAX", StringComparison.Ordinal))
             changed = TryVolume(line[5..], out var max) && Assign(() => State.VolumeMax = max);
         else if (line.StartsWith("MV", StringComparison.Ordinal))
-        {
-            Confirm("Z1VOL", line[2..]);
-            changed = TryVolume(line[2..], out var vol) && Assign(() => State.Main.Volume = vol);
-        }
+            changed = HandleVolume(1, line[2..]);
         else if (line.StartsWith("MU", StringComparison.Ordinal))
         {
             State.Main.Mute = line == "MUON";
@@ -1143,10 +1193,7 @@ public sealed class DenonClient : IAsyncDisposable
             Confirm($"Z{zone}PW", rest);
         }
         else if (rest.All(char.IsAsciiDigit))
-        {
-            Confirm($"Z{zone}VOL", rest);
-            return TryVolume(rest, out var vol) && Assign(() => zoneState.Volume = vol);
-        }
+            return HandleVolume(zone, rest);
         else if (rest.StartsWith("PS", StringComparison.Ordinal) ||
                  rest.StartsWith("CV", StringComparison.Ordinal) ||
                  rest.StartsWith("CS", StringComparison.Ordinal) ||

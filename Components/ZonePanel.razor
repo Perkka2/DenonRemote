@@ -29,7 +29,7 @@
                type="range"
                min="0"
                max="@Max.ToString(CultureInfo.InvariantCulture)"
-               step="0.5"
+               step="@DenonClient.VolumeStep(Zone).ToString(CultureInfo.InvariantCulture)"
                value="@(Volume?.ToString(CultureInfo.InvariantCulture) ?? "0")"
                disabled="@(!Enabled)"
                @oninput="OnSlide" />
