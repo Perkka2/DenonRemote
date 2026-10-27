@@ -24,7 +24,8 @@ Models/                         state, catalogs, surround parameter specs
 Pages/                          Index (Remote…Setup), Setup, Console
 Components/                     zone panel, grids, sliders, menu pad, now playing
 publish.sh                      self-contained builds for every platform
-.github/workflows/release.yml   the same on tag, attached to a release
+.forgejo/workflows/release.yml  the same on tag, attached to a Forgejo release
+.github/workflows/release.yml   the GitHub equivalent, on native runners
 ```
 
 ## Checks
@@ -63,12 +64,19 @@ Each zip holds a folder: a single executable with the .NET runtime inside it, `w
 `appsettings.json`. The recipient installs nothing. About 90 MB per platform. Targets:
 `osx-arm64`, `osx-x64`, `win-x64`, `win-arm64`, `linux-x64`, `linux-arm64`.
 
-Tag a release and GitHub Actions does the same on native runners, with ReadyToRun for
-quicker startup, and attaches the zips:
+Tag a release and Forgejo Actions does the same with ReadyToRun for quicker startup,
+and attaches the zips:
 
 ```bash
-git tag v1.0.0 && git push origin v1.0.0
+git tag v1.0.0 && git push idetorka v1.0.0
 ```
+
+All six targets build on one Linux runner, ReadyToRun included. The job uses the
+.NET 10 SDK, still targeting net8.0, because it ad-hoc signs the macOS executables
+on Linux. The .NET 8 SDK only signs on a Mac, and Apple Silicon kills an unsigned
+binary at launch. For the same reason `publish.sh` should only build the `osx-*`
+targets on a Mac, or with SDK 10. GitHub's workflow in `.github/` builds on native
+runners. Forgejo ignores it.
 
 Three deliberate choices in there:
 

@@ -1,0 +1,107 @@
+name: Release
+
+# Builds every target on one Linux runner and attaches the zips to a Forgejo release.
+#   git tag v1.0.0 && git push idetorka v1.0.0
+#
+# Forgejo reads this file and ignores .github/workflows, which stays for GitHub.
+#
+# Everything cross-compiles from linux-x64, ReadyToRun included. The .NET 10 SDK is
+# used (still targeting net8.0) because it ad-hoc signs the macOS executables on
+# Linux; the .NET 8 SDK only signs when it runs on a Mac, and Apple Silicon kills an
+# unsigned binary on launch.
+#
+# No JavaScript actions: the SDK image has no Node, and nothing here needs one.
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+jobs:
+  build:
+    # Must match a label your runner registered with (forgejo-runner's .runner file).
+    runs-on: docker
+    container:
+      image: mcr.microsoft.com/dotnet/sdk:10.0
+
+    defaults:
+      run:
+        shell: bash
+
+    env:
+      DOTNET_CLI_TELEMETRY_OPTOUT: '1'
+      DOTNET_NOLOGO: '1'
+
+    steps:
+      - name: Checkout
+        env:
+          TOKEN: ${{ github.token }}
+        run: |
+          git init -q .
+          git remote add origin "${GITHUB_SERVER_URL/:\/\//://x:$TOKEN@}/$GITHUB_REPOSITORY.git"
+          git fetch -q --depth 1 origin "$GITHUB_REF"
+          git checkout -q FETCH_HEAD
+
+      - name: Tools
+        run: apt-get update -qq && apt-get install -y -qq zip jq >/dev/null
+
+      # linux-x64 goes first and its build runs the self-test: the image only has the
+      # .NET 10 runtime, so `dotnet run` can't start a net8.0 app, but the published
+      # build carries its own runtime - and it's what actually ships.
+      - name: Publish
+        run: |
+          version=dev
+          [ "$GITHUB_REF_TYPE" = tag ] && version="${GITHUB_REF_NAME#v}"
+          mkdir -p dist
+          for rid in linux-x64 linux-arm64 osx-arm64 osx-x64 win-x64 win-arm64; do
+            echo "==> $rid"
+            # Outside the project: the Web SDK would pick up the previous targets'
+            # .json files as content and ship them inside the next one.
+            out="/tmp/publish/DenonRemote-$rid"
+            dotnet publish -c Release -r "$rid" -o "$out" \
+              --self-contained -p:PublishSingleFile=true -p:PublishReadyToRun=true
+            rm -f "$out"/*.pdb
+            if [ "$rid" = linux-x64 ]; then
+              echo "==> self-test"
+              "$out/DenonRemote" --self-test
+            fi
+            ( cd /tmp/publish && zip -qr "$OLDPWD/dist/DenonRemote-$version-$rid.zip" "DenonRemote-$rid" )
+          done
+          ls -l dist
+
+      - name: Release
+        if: github.ref_type == 'tag'
+        env:
+          TOKEN: ${{ github.token }}
+        run: |
+          api="$GITHUB_SERVER_URL/api/v1/repos/$GITHUB_REPOSITORY/releases"
+          auth="Authorization: token $TOKEN"
+
+          body=$(cat <<'EOF'
+          Self-contained builds — nothing to install, the .NET runtime is inside the executable.
+
+          Unzip the folder, run `DenonRemote` inside it, then open http://localhost:5080.
+          From a phone on the same wifi, use the address the app prints on startup.
+
+          These builds are unsigned:
+          * **macOS** — right-click the app and choose Open the first time, or
+            `xattr -d com.apple.quarantine DenonRemote`.
+          * **Windows** — SmartScreen warns; More info → Run anyway.
+
+          Allow the incoming-connection prompt on first run, or phones won't reach it.
+          EOF
+          )
+
+          # Reuse the release on a re-run instead of failing on the duplicate tag.
+          id=$(curl -fsS -H "$auth" "$api/tags/$GITHUB_REF_NAME" | jq -r .id) || id=
+          if [ -z "$id" ]; then
+            id=$(jq -n --arg tag "$GITHUB_REF_NAME" --arg body "$body" \
+                   '{tag_name: $tag, name: $tag, body: $body}' |
+                 curl -fsS -X POST -H "$auth" -H 'Content-Type: application/json' \
+                   --data @- "$api" | jq -r .id)
+          fi
+
+          for f in dist/*.zip; do
+            echo "uploading $f"
+            curl -fsS -X POST -H "$auth" -F "attachment=@$f" \
+              "$api/$id/assets?name=$(basename "$f")" >/dev/null
+          done
