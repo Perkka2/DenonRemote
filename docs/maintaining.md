@@ -25,7 +25,7 @@ Pages/                          Index (Remote…Setup), Setup, Console
 Components/                     zone panel, grids, sliders, menu pad, now playing
 publish.sh                      self-contained builds for every platform
 .forgejo/workflows/release.yml  the same on tag, attached to a Forgejo release
-.github/workflows/release.yml   the GitHub equivalent, on native runners
+.github/workflows/release.yml.disabled   the GitHub equivalent, on native runners (off for now)
 ```
 
 ## Checks
@@ -76,7 +76,8 @@ All six targets build on one Linux runner, ReadyToRun included. The job uses the
 on Linux. The .NET 8 SDK only signs on a Mac, and Apple Silicon kills an unsigned
 binary at launch. For the same reason `publish.sh` should only build the `osx-*`
 targets on a Mac, or with SDK 10. GitHub's workflow in `.github/` builds on native
-runners. Forgejo ignores it.
+runners. Forgejo ignores it. It's switched off with a `.disabled` suffix while releases
+come from Forgejo; rename it back to `release.yml` to turn it on.
 
 Three deliberate choices in there:
 
