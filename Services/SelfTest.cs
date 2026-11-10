@@ -35,6 +35,7 @@ public static class SelfTest
         ReceiverPacing();
         ReceiverNaming();
         HeosProtocol();
+        HttpApi();
 
         Console.WriteLine();
         Console.WriteLine($"  {_passed} passed, {Failures.Count} failed");
@@ -1251,6 +1252,66 @@ public static class SelfTest
             AjaxLabels.Label("speakers", 3, "Speaker", "0", "Speaker 0").Length > 0);
         Check("choices come back for a known field",
             AjaxLabels.Choices("video", 3, "HDMIControl").Count == 2);
+    }
+
+    /// <summary>
+    /// The HTTP API's own decisions. What it then does to the receiver is the same
+    /// client code the checks above already cover.
+    /// </summary>
+    private static void HttpApi()
+    {
+        Check("on switches on", RemoteApi.Switch("on", false) == true);
+        Check("a switch ignores case and padding", RemoteApi.Switch(" False ", true) == false);
+        Check("toggle turns an on state off", RemoteApi.Switch("toggle", true) == false);
+        Check("toggle turns an off state on", RemoteApi.Switch("toggle", false) == true);
+        Check("toggling a state not yet reported turns it on", RemoteApi.Switch("toggle", null) == true);
+        Check("a switch that is none of them is refused", RemoteApi.Switch("maybe", true) is null);
+        Check("a missing switch is refused", RemoteApi.Switch(null, true) is null);
+
+        Check("a request with no origin is a script, and allowed",
+            RemoteApi.SameOrigin(null, "10.0.1.5:5080"));
+        Check("the app's own pages are allowed",
+            RemoteApi.SameOrigin("http://10.0.1.5:5080", "10.0.1.5:5080"));
+        Check("another site is refused",
+            !RemoteApi.SameOrigin("https://example.com", "10.0.1.5:5080"));
+        Check("the same host on another port is refused",
+            !RemoteApi.SameOrigin("http://10.0.1.5:8080", "10.0.1.5:5080"));
+        Check("an origin that is not a URL is refused",
+            !RemoteApi.SameOrigin("null", "10.0.1.5:5080"));
+
+        var living = NewClient();
+        living.Config.SetName("Living Room");
+        var den = NewClient();
+        den.Config.SetName("Den");
+        DenonClient[] both = [living, den];
+
+        Check("a receiver is found by id", RemoteApi.Find(both, den.Config.Id) == den);
+        Check("a receiver is found by name, whatever the case", RemoteApi.Find(both, "living room") == living);
+        Check("an unknown receiver is not found", RemoteApi.Find(both, "kitchen") is null);
+
+        SourceOption[] sources = [new("SAT/CBL", "Apple TV"), new("BD", "Blu-ray")];
+        Check("an input is found by code", RemoteApi.Source(sources, "bd")?.Code == "BD");
+        Check("an input is found by the name the receiver gave it", RemoteApi.Source(sources, "apple tv")?.Code == "SAT/CBL");
+        Check("an unknown input is not found", RemoteApi.Source(sources, "PHONO") is null);
+
+        living.Config.Settings.MaxVolume = 60;
+        Feed(living, "PWON", "ZMON", "MVMAX 98", "MV455", "MUOFF", "SIBD", "MSSTEREO", "Z2ON", "Z230");
+
+        var scene = new Scene { Id = "abc", Name = "Movie night", ReceiverId = living.Config.Id };
+        var described = RemoteApi.Describe(living, [scene]);
+        var main = described.Zones[0];
+
+        Check("the API reports the main zone as the receiver left it",
+            main is { Zone: 1, Power: true, Volume: 45.5, Mute: false, Source: "BD" });
+        Check("the API names the input as well as coding it", main.SourceName == "Blu-ray");
+        Check("the API reports the sound mode", described.SoundMode == "STEREO");
+        Check("the API reports the ceiling in force", described.MaxVolume == 60);
+        Check("the API lists this receiver's scenes", described.Scenes is [{ Id: "abc", Name: "Movie night" }]);
+        Check("the API offers four Quick Selects", described.QuickSelects.Count == 4);
+
+        // The ceiling is the client's, so a script is held to it like a slider is.
+        Check("a volume over the ceiling is capped, however it was asked for",
+            Sent(living, () => living.SetZoneVolume(1, 90)) == "MV60");
     }
 
     // ---------------------------------------------------------------- helpers

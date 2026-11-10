@@ -2,6 +2,7 @@ using System.Globalization;
 using System.Net;
 using System.Net.NetworkInformation;
 using System.Net.Sockets;
+using System.Reflection;
 
 namespace DenonRemote.Services;
 
@@ -43,6 +44,14 @@ public sealed class StartupOptions
 
     /// <summary>True when the caller set --urls themselves, so we leave binding alone.</summary>
     public bool UrlsOverridden { get; private init; }
+
+    /// <summary>
+    /// The version this build was stamped with: the release tag, or the csproj's
+    /// number for a local build. The SDK appends the commit after a plus.
+    /// </summary>
+    public static string Version { get; } =
+        typeof(StartupOptions).Assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()
+            ?.InformationalVersion.Split('+')[0] ?? "dev";
 
     public static StartupOptions Parse(string[] args)
     {
@@ -167,7 +176,7 @@ public sealed class StartupOptions
         var lines = new List<string>
         {
             "",
-            "  Denon Remote",
+            $"  Denon Remote {Version}",
             $"  On this machine:  http://localhost:{Port.ToString(CultureInfo.InvariantCulture)}",
         };
 
@@ -179,6 +188,7 @@ public sealed class StartupOptions
                 lines.Add($"      http://{address}:{Port.ToString(CultureInfo.InvariantCulture)}");
         }
 
+        lines.Add($"  For scripts:      http://localhost:{Port.ToString(CultureInfo.InvariantCulture)}/api");
         lines.Add("");
         lines.Add($"  Settings are kept in {AppPaths.Root}");
         lines.Add("  Press Ctrl+C to stop.");

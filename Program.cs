@@ -149,6 +149,7 @@ app.UseStaticFiles();
 app.UseRouting();
 
 app.MapBlazorHub();
+app.MapRemoteApi();
 app.MapFallbackToPage("/_Host");
 
 await app.StartAsync();

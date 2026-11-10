@@ -8,7 +8,7 @@
 
     <!-- Local builds report this. A release is stamped with its tag by the workflow,
          so this only has to be roughly right between releases. -->
-    <Version>1.3.2</Version>
+    <Version>1.4.0</Version>
     <Product>Denon Remote</Product>
     <AssemblyName>DenonRemote</AssemblyName>
 

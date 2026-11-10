@@ -81,6 +81,14 @@ a big slider jump, a sleep timer, and a night mode.
 **Protocol console** — send any raw command and watch both directions live. This is
 the tool for working out commands that aren't in the protocol document.
 
+**HTTP API** — power, volume, inputs, sound mode, Quick Select and scenes for a
+shortcut, a Stream Deck button or a cron job, held to the same volume ceiling as the
+pages. See [docs/api.md](docs/api.md).
+
+```bash
+curl -X POST 'http://localhost:5080/api/receivers/Living%20Room/scenes/Movie%20night'
+```
+
 ## A few things worth knowing
 
 Every phone, tablet and laptop looking at the app shares one socket per receiver and
@@ -100,6 +108,7 @@ Volume is shown as the number on the receiver's front panel.
 
 ## Documentation
 
+* [docs/api.md](docs/api.md) — the HTTP API for scripts and buttons.
 * [docs/protocol.md](docs/protocol.md) — the undocumented HTTP interfaces: the graphic
   EQ on both generations, the setup API, the pre-HEOS network player, and how they
   were found.

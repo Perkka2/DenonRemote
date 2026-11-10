@@ -18,6 +18,7 @@ Services/
   HttpProbe.cs                  HTTP probing, discovery sweep, setup-UI capture
   SsdpDiscovery.cs              M-SEARCH + UPnP description parsing, direct probe
   ReceiverStore.cs / SceneStore.cs / AppPaths.cs
+  RemoteApi.cs                  the HTTP API for scripts (docs/api.md)
   StartupOptions.cs             --port / --no-browser / --self-test / --probe
   SelfTest.cs                   every check, in one file
 Models/                         state, catalogs, surround parameter specs
