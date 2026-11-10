@@ -114,7 +114,7 @@ Runs against both receivers on a home network. Checks:
 dotnet run -- --self-test
 ```
 
-312 checks over the parts that have actually had bugs — protocol parsing, command
+Checks over the parts that have actually had bugs — protocol parsing, command
 encoding, both graphic-EQ payload shapes, the setup API's XML, the network player's
 two screen modes, and the request pacing. It's a flag on the app rather than a test
 project, so it needs no packages and runs anywhere the app runs; the publish script
