@@ -49,8 +49,12 @@ jobs:
       # build carries its own runtime - and it's what actually ships.
       - name: Publish
         run: |
-          version=dev
-          [ "$GITHUB_REF_TYPE" = tag ] && version="${GITHUB_REF_NAME#v}"
+          version=dev stamp=
+          if [ "$GITHUB_REF_TYPE" = tag ]; then
+            version="${GITHUB_REF_NAME#v}"
+            # The app reports the tag it was released as, whatever the csproj says.
+            stamp="-p:Version=$version"
+          fi
           mkdir -p dist
           for rid in linux-x64 linux-arm64 osx-arm64 osx-x64 win-x64 win-arm64; do
             echo "==> $rid"
@@ -58,7 +62,7 @@ jobs:
             # .json files as content and ship them inside the next one.
             out="/tmp/publish/DenonRemote-$rid"
             dotnet publish -c Release -r "$rid" -o "$out" \
-              --self-contained -p:PublishSingleFile=true -p:PublishReadyToRun=true
+              --self-contained -p:PublishSingleFile=true -p:PublishReadyToRun=true $stamp
             rm -f "$out"/*.pdb
             if [ "$rid" = linux-x64 ]; then
               echo "==> self-test"

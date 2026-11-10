@@ -44,9 +44,12 @@ jobs:
       - name: Publish
         shell: bash
         run: |
+          # The app reports the tag it was released as, whatever the csproj says.
+          stamp=
+          [ "$GITHUB_REF_TYPE" = tag ] && stamp="-p:Version=${GITHUB_REF_NAME#v}"
           dotnet publish -c Release -r ${{ matrix.rid }} -o "out/DenonRemote-${{ matrix.rid }}" \
             --nologo --self-contained -p:PublishSingleFile=true \
-            -p:PublishReadyToRun=${{ startsWith(matrix.rid, 'win-arm64') && 'false' || 'true' }}
+            -p:PublishReadyToRun=${{ startsWith(matrix.rid, 'win-arm64') && 'false' || 'true' }} $stamp
           rm -f out/DenonRemote-${{ matrix.rid }}/*.pdb
 
       # Packaging is split by OS on purpose. The Windows runners have no `zip` in
