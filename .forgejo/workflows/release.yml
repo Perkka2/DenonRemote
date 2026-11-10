@@ -61,8 +61,19 @@ jobs:
             # Outside the project: the Web SDK would pick up the previous targets'
             # .json files as content and ship them inside the next one.
             out="/tmp/publish/DenonRemote-$rid"
-            dotnet publish -c Release -r "$rid" -o "$out" \
-              --self-contained -p:PublishSingleFile=true -p:PublishReadyToRun=true $stamp
+            publish() {
+              rm -rf "$out"
+              dotnet publish -c Release -r "$rid" -o "$out" \
+                --self-contained -p:PublishSingleFile=true -p:PublishReadyToRun="$1" $stamp
+            }
+            # ReadyToRun only makes the first start quicker, and its compiler (crossgen2)
+            # has crashed here with a segfault while cross-compiling for macOS. So a
+            # failure is retried once, and after that the target ships without it rather
+            # than taking the whole release down.
+            if ! publish true && ! publish true; then
+              echo "!! ReadyToRun failed twice for $rid - publishing it without (slower first start)"
+              publish false
+            fi
             rm -f "$out"/*.pdb
             if [ "$rid" = linux-x64 ]; then
               echo "==> self-test"
