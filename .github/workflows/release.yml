@@ -3,8 +3,8 @@ name: Release
 # Builds every target and attaches the zips to a GitHub release.
 #   git tag v1.0.0 && git push origin v1.0.0
 #
-# Disabled while releases come from Forgejo (.forgejo/workflows/release.yml): the
-# .disabled suffix keeps GitHub from loading it. Rename back to release.yml to restore.
+# Only GitHub runs this. Forgejo has its own in .forgejo/workflows/release.yml, and
+# with that folder present it does not look in .github/ at all.
 on:
   push:
     tags: ['v*']
