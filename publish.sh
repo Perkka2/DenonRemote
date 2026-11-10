@@ -17,6 +17,17 @@ VERSION=$(grep -o '<Version>[^<]*' DenonRemote.csproj | cut -d'>' -f2)
 DEFAULT_TARGETS="osx-arm64 osx-x64 win-x64 win-arm64 linux-x64 linux-arm64"
 read -ra TARGETS <<< "${*:-$DEFAULT_TARGETS}"
 
+# Only a Mac, or the .NET 10 SDK anywhere, signs a macOS executable - and Apple
+# Silicon kills an unsigned one at launch. Refuse rather than build a dud.
+if [[ "$(uname)" != Darwin ]] && (( $(dotnet --version | cut -d. -f1) < 10 )); then
+    for rid in "${TARGETS[@]}"; do
+        if [[ "$rid" == osx-* ]]; then
+            echo "Can't build $rid here: off a Mac it needs the .NET 10 SDK to be signed." >&2
+            exit 1
+        fi
+    done
+fi
+
 echo "==> self-test"
 dotnet run -c Release --self-test
 

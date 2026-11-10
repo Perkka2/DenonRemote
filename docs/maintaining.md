@@ -74,8 +74,8 @@ git tag v1.0.0 && git push idetorka v1.0.0
 All six targets build on one Linux runner, ReadyToRun included. The job uses the
 .NET 10 SDK, still targeting net8.0, because it ad-hoc signs the macOS executables
 on Linux. The .NET 8 SDK only signs on a Mac, and Apple Silicon kills an unsigned
-binary at launch. For the same reason `publish.sh` should only build the `osx-*`
-targets on a Mac, or with SDK 10. GitHub's workflow in `.github/` builds on native
+binary at launch. For the same reason `publish.sh` refuses the `osx-*` targets
+unless it runs on a Mac or with SDK 10. GitHub's workflow in `.github/` builds on native
 runners. Forgejo ignores it. It's switched off with a `.disabled` suffix while releases
 come from Forgejo; rename it back to `release.yml` to turn it on.
 
