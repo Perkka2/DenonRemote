@@ -863,7 +863,28 @@ public sealed class DenonClient : IAsyncDisposable
     public void RunScene(Scene scene)
     {
         foreach (var command in scene.Commands)
-            Send(command);
+            Send(Capped(command));
+    }
+
+    private static readonly string[] VolumePrefixes = ["MV", "Z2", "Z3"];
+
+    /// <summary>
+    /// A scene is raw commands, and one saved at 70 would otherwise still set 70 with
+    /// night mode on - the one path that got past the ceiling. A volume over it is
+    /// rewritten to the ceiling; everything else goes through as it is.
+    /// </summary>
+    internal string Capped(string command)
+    {
+        foreach (var prefix in VolumePrefixes)
+        {
+            if (!command.StartsWith(prefix, StringComparison.Ordinal)) continue;
+            if (!TryVolume(command[prefix.Length..], out var volume) || volume <= EffectiveMax) continue;
+
+            // Only the main zone takes half steps.
+            return prefix + EncodeVolume(prefix == "MV" ? EffectiveMax : Math.Floor(EffectiveMax));
+        }
+
+        return command;
     }
 
     /// <summary>Builds a scene from what the receiver is doing right now.</summary>

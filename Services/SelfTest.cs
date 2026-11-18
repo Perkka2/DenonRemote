@@ -36,6 +36,7 @@ public static class SelfTest
         ReceiverNaming();
         HeosProtocol();
         HttpApi();
+        Scenes();
 
         Console.WriteLine();
         Console.WriteLine($"  {_passed} passed, {Failures.Count} failed");
@@ -1312,6 +1313,38 @@ public static class SelfTest
         // The ceiling is the client's, so a script is held to it like a slider is.
         Check("a volume over the ceiling is capped, however it was asked for",
             Sent(living, () => living.SetZoneVolume(1, 90)) == "MV60");
+    }
+
+    /// <summary>
+    /// Scenes are raw commands, which is how one used to walk straight past the
+    /// volume ceiling - and why what a scene contains has to be read back out of it.
+    /// </summary>
+    private static void Scenes()
+    {
+        var client = NewClient();
+        client.Config.Settings.MaxVolume = 60;
+        client.Config.Settings.NightMaxVolume = 40;
+        Feed(client, "PWON", "ZMON", "MVMAX 98", "MV455", "MUOFF", "SIBD", "MSSTEREO", "Z2ON", "Z2CD", "Z230");
+
+        Check("a scene volume under the ceiling is left alone", client.Capped("MV45") == "MV45");
+        Check("a scene volume over the ceiling is capped", client.Capped("MV70") == "MV60");
+        Check("a half-step scene volume over the ceiling is capped", client.Capped("MV605") == "MV60");
+        Check("a zone 2 scene volume over the ceiling is capped", client.Capped("Z275") == "Z260");
+        Check("a zone 3 scene volume over the ceiling is capped", client.Capped("Z375") == "Z360");
+        Check("a zone input is not mistaken for a volume", client.Capped("Z2CD") == "Z2CD");
+        Check("zone power is not mistaken for a volume", client.Capped("Z2ON") == "Z2ON");
+        Check("the receiver's own maximum report is not a volume", client.Capped("MVMAX 98") == "MVMAX 98");
+        Check("a scene's pause is left alone", client.Capped("@DELAY:1200") == "@DELAY:1200");
+
+        var loud = new Scene { Commands = ["ZMON", "SIBD", "MV70", "Z275"] };
+        client.ClearPending();
+        client.RunScene(loud);
+        Check("running a scene caps its volumes and keeps its order",
+            client.Pending.SequenceEqual(["ZMON", "SIBD", "MV60", "Z260"]));
+
+        client.SetNightMode(true);
+        Check("night mode's lower ceiling applies to scenes too", client.Capped("MV55") == "MV40");
+        client.SetNightMode(false);
     }
 
     // ---------------------------------------------------------------- helpers
