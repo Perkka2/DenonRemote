@@ -1342,9 +1342,64 @@ public static class SelfTest
         Check("running a scene caps its volumes and keeps its order",
             client.Pending.SequenceEqual(["ZMON", "SIBD", "MV60", "Z260"]));
 
+        var everything = client.CaptureScene("all");
+        Check("a full scene holds input, mode, volume and the other zone",
+            everything.Commands.SequenceEqual(["ZMON", "@DELAY:1200", "SIBD", "MSSTEREO", "MV455", "MUOFF", "Z2ON", "Z2CD", "Z230"]));
+        Check("a full scene reads back as everything", DenonClient.PartsOf(everything) == SceneParts.All);
+
+        var quiet = client.CaptureScene("no volume", SceneParts.All & ~SceneParts.Volume);
+        Check("a scene without volume sets no volume and does not unmute",
+            quiet.Commands.SequenceEqual(["ZMON", "@DELAY:1200", "SIBD", "MSSTEREO", "Z2ON", "Z2CD"]));
+        Check("a scene without volume reads back without it",
+            DenonClient.PartsOf(quiet) == (SceneParts.All & ~SceneParts.Volume));
+
+        var input = client.CaptureScene("input only", SceneParts.Input);
+        Check("an input-only scene leaves the other zones alone",
+            input.Commands.SequenceEqual(["ZMON", "@DELAY:1200", "SIBD"]));
+        Check("an input-only scene reads back as input only", DenonClient.PartsOf(input) == SceneParts.Input);
+
+        Check("a scene is described in words",
+            client.DescribeScene(everything) == "Blu-ray · Stereo · volume 45.5 · Zone 2 on");
+        Check("a scene that only powers on says so",
+            client.DescribeScene(new Scene { Commands = ["ZMON"] }) == "Main zone on");
+
         client.SetNightMode(true);
         Check("night mode's lower ceiling applies to scenes too", client.Capped("MV55") == "MV40");
         client.SetNightMode(false);
+
+        var file = Path.Combine(Path.GetTempPath(), $"denonremote-scenes-{Guid.NewGuid():n}.json");
+        try
+        {
+            var store = new SceneStore(NullLogger<SceneStore>.Instance, file);
+            store.Add(new Scene { Id = "a", ReceiverId = "one", Name = "A" });
+            store.Add(new Scene { Id = "x", ReceiverId = "two", Name = "X" });
+            store.Add(new Scene { Id = "b", ReceiverId = "one", Name = "B" });
+            store.Add(new Scene { Id = "c", ReceiverId = "one", Name = "C" });
+
+            string Order(string receiver) => string.Concat(store.For(receiver).Select(s => s.Id));
+
+            store.Move("c", -1);
+            Check("a scene moves up one place", Order("one") == "acb");
+            store.Move("c", -1);
+            Check("a scene moves past another receiver's scene", Order("one") == "cab");
+            store.Move("c", -1);
+            Check("the first scene cannot move further up", Order("one") == "cab");
+            store.Move("b", 1);
+            Check("the last scene cannot move further down", Order("one") == "cab");
+            Check("moving scenes leaves the other receiver's alone", Order("two") == "x");
+
+            store.Rename("a", "Evening");
+            store.Replace("a", ["ZMON", "SITV"]);
+
+            var reread = new SceneStore(NullLogger<SceneStore>.Instance, file).For("one").First(s => s.Id == "a");
+            Check("a renamed scene is saved", reread.Name == "Evening");
+            Check("an updated scene is saved with its new commands", reread.Commands.SequenceEqual(["ZMON", "SITV"]));
+            Check("the order is saved", string.Concat(new SceneStore(NullLogger<SceneStore>.Instance, file).For("one").Select(s => s.Id)) == "cab");
+        }
+        finally
+        {
+            File.Delete(file);
+        }
     }
 
     // ---------------------------------------------------------------- helpers

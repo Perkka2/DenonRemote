@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Net.Sockets;
 using System.Text;
 using DenonRemote.Models;
@@ -888,16 +889,21 @@ public sealed class DenonClient : IAsyncDisposable
     }
 
     /// <summary>Builds a scene from what the receiver is doing right now.</summary>
-    public Scene CaptureScene(string name)
+    public Scene CaptureScene(string name, SceneParts parts = SceneParts.All)
     {
         var commands = new List<string> { "ZMON", $"{DelayToken}1200" };
 
-        if (State.Main.Source is { Length: > 0 } source) commands.Add("SI" + source);
-        if (State.SoundMode is { Length: > 0 } mode && !mode.StartsWith("QUICK")) commands.Add("MS" + mode);
-        if (State.Main.Volume is { } volume) commands.Add("MV" + EncodeVolume(volume));
-        if (State.Main.Mute == false) commands.Add("MUOFF");
+        if (parts.HasFlag(SceneParts.Input) && State.Main.Source is { Length: > 0 } source)
+            commands.Add("SI" + source);
+        if (parts.HasFlag(SceneParts.SoundMode) && State.SoundMode is { Length: > 0 } mode && !mode.StartsWith("QUICK"))
+            commands.Add("MS" + mode);
+        if (parts.HasFlag(SceneParts.Volume))
+        {
+            if (State.Main.Volume is { } volume) commands.Add("MV" + EncodeVolume(volume));
+            if (State.Main.Mute == false) commands.Add("MUOFF");
+        }
 
-        foreach (var zone in Zones.Where(z => z != 1))
+        foreach (var zone in Zones.Where(z => z != 1 && parts.HasFlag(SceneParts.Zones)))
         {
             var zoneState = State.Zone(zone);
             if (zoneState.Power is null) continue;
@@ -905,11 +911,53 @@ public sealed class DenonClient : IAsyncDisposable
             commands.Add($"{ZonePrefix(zone)}{(zoneState.Power == true ? "ON" : "OFF")}");
             if (zoneState.Power != true) continue;
 
-            if (zoneState.Source is { Length: > 0 } zoneSource) commands.Add($"{ZonePrefix(zone)}{zoneSource}");
-            if (zoneState.Volume is { } zoneVolume) commands.Add($"{ZonePrefix(zone)}{EncodeVolume(zoneVolume)}");
+            if (parts.HasFlag(SceneParts.Input) && zoneState.Source is { Length: > 0 } zoneSource)
+                commands.Add($"{ZonePrefix(zone)}{zoneSource}");
+            if (parts.HasFlag(SceneParts.Volume) && zoneState.Volume is { } zoneVolume)
+                commands.Add($"{ZonePrefix(zone)}{EncodeVolume(zoneVolume)}");
         }
 
         return new Scene { Name = name, ReceiverId = Config.Id, Commands = commands };
+    }
+
+    /// <summary>
+    /// What a saved scene sets, read back from its commands. The commands are all a
+    /// scene is, so this is how updating one knows to leave the volume out again.
+    /// </summary>
+    public static SceneParts PartsOf(Scene scene)
+    {
+        var parts = SceneParts.None;
+
+        foreach (var command in scene.Commands)
+        {
+            if (command.StartsWith("SI", StringComparison.Ordinal)) parts |= SceneParts.Input;
+            else if (command.StartsWith("MS", StringComparison.Ordinal)) parts |= SceneParts.SoundMode;
+            else if (command.StartsWith("MV", StringComparison.Ordinal)) parts |= SceneParts.Volume;
+            else if (command.StartsWith("Z2", StringComparison.Ordinal) || command.StartsWith("Z3", StringComparison.Ordinal))
+                parts |= SceneParts.Zones;
+        }
+
+        return parts;
+    }
+
+    /// <summary>A scene in words: "Blu-ray · Stereo · volume 45 · Zone 2 on".</summary>
+    public string DescribeScene(Scene scene)
+    {
+        var words = new List<string>();
+
+        foreach (var command in scene.Commands)
+        {
+            if (command.StartsWith("SI", StringComparison.Ordinal))
+                words.Add(DenonCatalog.LabelForSource(Profile.Sources, command[2..]));
+            else if (command.StartsWith("MS", StringComparison.Ordinal))
+                words.Add(DenonCatalog.LabelForMode(command[2..]));
+            else if (command.StartsWith("MV", StringComparison.Ordinal) && TryVolume(command[2..], out var volume))
+                words.Add($"volume {volume.ToString("0.#", CultureInfo.InvariantCulture)}");
+            else if (command is "Z2ON" or "Z3ON" or "Z2OFF" or "Z3OFF")
+                words.Add($"{Profile.ZoneName(command[1] - '0')} {(command.EndsWith("ON") ? "on" : "off")}");
+        }
+
+        return words.Count > 0 ? string.Join(" · ", words) : "Main zone on";
     }
 
     // ---------------------------------------------------------------- encoding

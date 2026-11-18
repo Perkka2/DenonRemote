@@ -35,7 +35,8 @@ appear only if the receiver has them. Input names, zone names and Quick Select n
 come from the unit itself, so the grid shows what you named things and hides inputs
 you deleted. Quick Select 1–4 are the receiver's own slots; scenes are app-side presets
 that set input, volume, sound mode and the other zones together — something the
-hardware can't do.
+hardware can't do. When saving one you choose which of those it sets, so a scene can
+switch input without touching the volume; Edit renames, reorders and updates them.
 
 **Sound** — the settings buried deepest in the on-screen menu: tone, channel trims,
 Audyssey, Dynamic Volume, Restorer, and the full Surround Parameter menu. The app asks

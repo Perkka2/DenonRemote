@@ -6,9 +6,17 @@
 <section class="panel tight">
     <div class="quick-head">
         <h2>Scenes</h2>
-        <button class="pill" disabled="@Disabled" @onclick="() => capturing = !capturing">
-            @(capturing ? "Cancel" : "Save current")
-        </button>
+        <div class="scene-actions">
+            @if (Mine.Count > 0)
+            {
+                <button class="pill @(editing ? "active" : "")" @onclick="() => { editing = !editing; capturing = false; }">
+                    @(editing ? "Done" : "Edit")
+                </button>
+            }
+            <button class="pill" disabled="@Disabled" @onclick="() => { capturing = !capturing; editing = false; }">
+                @(capturing ? "Cancel" : "Save current")
+            </button>
+        </div>
     </div>
 
     @if (capturing)
@@ -17,11 +25,47 @@
             <input class="text" placeholder="Movie night" @bind="name" @bind:event="oninput" />
             <button class="primary" disabled="@(string.IsNullOrWhiteSpace(name))" @onclick="Capture">Save</button>
         </div>
+
+        @* Leaving the volume out is what makes a scene safe to tap late at night. *@
+        <div class="scene-parts">
+            @foreach (var (part, label) in Choices)
+            {
+                var current = part;
+                <button class="pill @(include.HasFlag(current) ? "active" : "")" @onclick="() => include ^= current">
+                    @label
+                </button>
+            }
+        </div>
     }
 
     @if (Mine.Count == 0)
     {
         <p class="muted-text">No scenes yet — set the receiver how you like it, then save it.</p>
+    }
+    else if (editing)
+    {
+        @* Deleting lives here, behind Edit, rather than as a cross on every tile where
+           a thumb aiming for the scene could land on it. *@
+        <div class="scene-list">
+            @foreach (var scene in Mine)
+            {
+                var current = scene;
+                <div class="scene-edit" @key="current.Id">
+                    <input class="text" value="@current.Name" aria-label="Scene name" @key="(current.Id, refused)"
+                           @onchange="e => Rename(current, e.Value?.ToString())" />
+                    <div class="scene-tools">
+                        <button class="pill" title="Move up" disabled="@(current == Mine[0])"
+                                @onclick="() => Scenes.Move(current.Id, -1)">&uarr;</button>
+                        <button class="pill" title="Move down" disabled="@(current == Mine[^1])"
+                                @onclick="() => Scenes.Move(current.Id, 1)">&darr;</button>
+                        <button class="pill" title="Replace with what the receiver is doing now" disabled="@Disabled"
+                                @onclick="() => Update(current)">Update</button>
+                        <button class="pill" title="Delete scene" @onclick="() => Scenes.Remove(current.Id)">Delete</button>
+                    </div>
+                    <p class="muted-text">@Client.DescribeScene(current)</p>
+                </div>
+            }
+        </div>
     }
     else
     {
@@ -29,12 +73,9 @@
             @foreach (var scene in Mine)
             {
                 var current = scene;
-                <div class="scene">
-                    <button class="tile" disabled="@Disabled" @onclick="() => Client.RunScene(current)">
-                        @current.Name
-                    </button>
-                    <button class="x" title="Delete scene" @onclick="() => Scenes.Remove(current.Id)">&times;</button>
-                </div>
+                <button class="tile" disabled="@Disabled" @onclick="() => Client.RunScene(current)">
+                    @current.Name
+                </button>
             }
         </div>
     }
@@ -43,8 +84,22 @@
 @code {
     [Parameter, EditorRequired] public DenonClient Client { get; set; } = default!;
 
+    private static readonly (SceneParts Part, string Label)[] Choices =
+    [
+        (SceneParts.Input, "Input"),
+        (SceneParts.SoundMode, "Sound mode"),
+        (SceneParts.Volume, "Volume"),
+        (SceneParts.Zones, "Other zones"),
+    ];
+
     private bool capturing;
+    private bool editing;
     private string name = "";
+    private SceneParts include = SceneParts.All;
+
+    // Bumped to rebuild a name box whose edit was refused: its value did not change
+    // as far as the renderer knows, so nothing else would put the old name back.
+    private int refused;
 
     private IReadOnlyList<Scene> Mine => Scenes.For(Client.Config.Id);
     private bool Disabled => !Client.State.Online;
@@ -55,9 +110,24 @@
 
     private void Capture()
     {
-        Scenes.Add(Client.CaptureScene(name.Trim()));
+        Scenes.Add(Client.CaptureScene(name.Trim(), include));
         name = "";
+        include = SceneParts.All;
         capturing = false;
+    }
+
+    private void Rename(Scene scene, string? wanted)
+    {
+        // An emptied box puts the old name back rather than leaving a blank tile.
+        if (!string.IsNullOrWhiteSpace(wanted)) Scenes.Rename(scene.Id, wanted.Trim());
+        else refused++;
+    }
+
+    /// <summary>Re-captures a scene with the same things in it as it had before.</summary>
+    private void Update(Scene scene)
+    {
+        var parts = DenonClient.PartsOf(scene);
+        Scenes.Replace(scene.Id, Client.CaptureScene(scene.Name, parts == SceneParts.None ? SceneParts.All : parts).Commands);
     }
 
     public void Dispose() => Scenes.Changed -= OnChanged;

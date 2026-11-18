@@ -4,11 +4,11 @@ using DenonRemote.Models;
 namespace DenonRemote.Services;
 
 /// <summary>Scenes persisted to ~/.denonremote/scenes.json.</summary>
-public sealed class SceneStore(ILogger<SceneStore> log)
+public sealed class SceneStore(ILogger<SceneStore> log, string? path = null)
 {
     private static readonly JsonSerializerOptions Json = new() { WriteIndented = true };
 
-    private readonly string _path = AppPaths.Scenes;
+    private readonly string _path = path ?? AppPaths.Scenes;
 
     private List<Scene>? _scenes;
     private readonly object _gate = new();
@@ -47,6 +47,50 @@ public sealed class SceneStore(ILogger<SceneStore> log)
         {
             _scenes ??= Load();
             _scenes.RemoveAll(s => s.Id == id);
+            Save();
+        }
+        Changed?.Invoke();
+    }
+
+    public void Rename(string id, string name) => Change(id, scene => scene.Name = name);
+
+    /// <summary>Replaces what a scene does and keeps its name, id and place.</summary>
+    public void Replace(string id, IEnumerable<string> commands) =>
+        Change(id, scene => scene.Commands = commands.ToList());
+
+    /// <summary>
+    /// Moves a scene one place among its own receiver's scenes. The file holds every
+    /// receiver's scenes in one list, so it swaps with the neighbour that belongs to
+    /// the same receiver rather than the one that happens to be next to it.
+    /// </summary>
+    public void Move(string id, int direction)
+    {
+        lock (_gate)
+        {
+            _scenes ??= Load();
+
+            var from = _scenes.FindIndex(s => s.Id == id);
+            if (from < 0) return;
+
+            var to = from + Math.Sign(direction);
+            while (to >= 0 && to < _scenes.Count && _scenes[to].ReceiverId != _scenes[from].ReceiverId)
+                to += Math.Sign(direction);
+            if (to < 0 || to >= _scenes.Count || to == from) return;
+
+            (_scenes[from], _scenes[to]) = (_scenes[to], _scenes[from]);
+            Save();
+        }
+        Changed?.Invoke();
+    }
+
+    private void Change(string id, Action<Scene> change)
+    {
+        lock (_gate)
+        {
+            _scenes ??= Load();
+            if (_scenes.Find(s => s.Id == id) is not { } scene) return;
+
+            change(scene);
             Save();
         }
         Changed?.Invoke();
