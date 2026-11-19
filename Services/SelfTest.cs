@@ -37,6 +37,7 @@ public static class SelfTest
         HeosProtocol();
         HttpApi();
         Scenes();
+        StatusChecks();
 
         Console.WriteLine();
         Console.WriteLine($"  {_passed} passed, {Failures.Count} failed");
@@ -1416,6 +1417,51 @@ public static class SelfTest
             ajax,
             new ReceiverInfoReader(ajax),
             NullLoggerFactory.Instance);
+    }
+
+    /// <summary>
+    /// The periodic status check: what it asks, when it holds back, how it notices a
+    /// connection that died without saying so, and that it stays out of the console.
+    /// </summary>
+    private static void StatusChecks()
+    {
+        var client = NewClient();
+        Feed(client, "PWON", "ZMON", "MV40", "MUOFF", "SICD", "MSSTEREO");
+        client.ClearPending();
+        client.ClearLog();
+
+        Check("a status check is not refused on a quiet connection", client.CheckStatus());
+        Check("it asks for power, volume, mute, input and mode",
+            new[] { "PW?", "ZM?", "MV?", "MU?", "SI?", "MS?" }.All(client.Pending.Contains));
+        Check("it leaves out zones the receiver does not have", !client.Pending.Contains("Z3?"));
+
+        Feed(client, "PWON", "ZMON", "MV40", "MUOFF", "SICD", "MSSTEREO");
+        Check("answers that say nothing new stay out of the log", client.Log.Count == 0);
+
+        client.ClearPending();
+        Check("an answered check allows the next one", client.CheckStatus());
+        Feed(client, "PWSTANDBY");
+        Check("an answer with news is applied", client.State.Power == false);
+        Check("and logged", client.Log.Count == 1 && client.Log[0].Text == "PWSTANDBY");
+
+        client.ClearPending();
+        Check("a check goes out", client.CheckStatus());
+        client.ClearPending();
+        Check("silence since the last check means the connection is dead", !client.CheckStatus());
+        Check("and nothing more is asked of it", client.Pending.Count == 0);
+
+        Feed(client, "PWON");
+        client.SetZoneMute(1, true);
+        var queued = client.Pending.Count;
+        Check("a check holds back while a command is under way",
+            client.CheckStatus() && client.Pending.Count == queued);
+
+        var zoned = NewClient();
+        Feed(zoned, "Z3ON");
+        zoned.ClearPending();
+        zoned.CheckStatus();
+        Check("other zones are asked about once seen",
+            zoned.Pending.Contains("Z2?") && zoned.Pending.Contains("Z3MU?"));
     }
 
     private static void Feed(DenonClient client, params string[] lines)

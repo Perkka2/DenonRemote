@@ -21,6 +21,22 @@ public sealed class DenonClient : IAsyncDisposable
     /// <summary>The protocol wants a small gap between commands or it drops them.</summary>
     private static readonly TimeSpan SendGap = TimeSpan.FromMilliseconds(55);
 
+    /// <summary>
+    /// How often the receiver is asked what it is doing, on top of what it volunteers.
+    /// The socket has no keepalive: a receiver that loses power or drops off the wifi
+    /// leaves it looking open, and without this the last known state stays on screen
+    /// for good. It also catches the odd change the receiver never announced.
+    /// </summary>
+    internal static readonly TimeSpan StatusInterval = TimeSpan.FromSeconds(30);
+
+    /// <summary>How long after a status check its answers may arrive and count as such.</summary>
+    private const int StatusAnswerWindowMs = 5000;
+
+    /// <summary>What a status check asks: the things a glance at the remote shows.</summary>
+    private static readonly string[] StatusQueries = ["PW?", "ZM?", "MV?", "MU?", "SI?", "MS?"];
+
+    private static readonly string[] StatusPrefixes = ["PW", "ZM", "MV", "MU", "SI", "MS", "Z2", "Z3"];
+
     /// <summary>Prefix for a queue entry that waits instead of sending.</summary>
     private const string DelayToken = "@DELAY:";
 
@@ -40,6 +56,13 @@ public sealed class DenonClient : IAsyncDisposable
     private readonly Dictionary<string, PendingChange> _pending = new();
     private readonly Dictionary<string, CommandStatus> _statuses = new();
     private Timer? _watchdog;
+    private Timer? _statusTimer;
+
+    // Set by a status check, cleared by anything the receiver says. Still set at the
+    // next check means a whole interval of silence after being asked a question.
+    private volatile bool _awaitingAnswer;
+    private long _statusAnswersUntil;
+    private string? _dropReason;
 
     private CancellationTokenSource? _cts;
     private Task? _connectionLoop;
@@ -141,7 +164,8 @@ public sealed class DenonClient : IAsyncDisposable
         LogAppended?.Invoke();
     }
 
-    private sealed record PendingCommand(string Text, string? CoalesceKey);
+    /// <param name="Quiet">Kept out of the console log: routine, and it would bury the rest.</param>
+    private sealed record PendingCommand(string Text, string? CoalesceKey, bool Quiet = false);
 
     private sealed record PendingChange(
         string Key, string Label, string Command, string? Expected, DateTimeOffset Sent, Action? Revert);
@@ -157,6 +181,7 @@ public sealed class DenonClient : IAsyncDisposable
         _ = Task.Run(() => LoadProfileAsync(_cts.Token));
         _watchdog = new Timer(_ => SweepPending(), null,
             TimeSpan.FromMilliseconds(500), TimeSpan.FromMilliseconds(500));
+        _statusTimer = new Timer(_ => StatusTick(), null, StatusInterval, StatusInterval);
     }
 
     public async ValueTask DisposeAsync()
@@ -165,6 +190,7 @@ public sealed class DenonClient : IAsyncDisposable
         await _cts.CancelAsync();
 
         if (_watchdog is not null) await _watchdog.DisposeAsync();
+        if (_statusTimer is not null) await _statusTimer.DisposeAsync();
         if (Heos is not null) await Heos.DisposeAsync();
 
         try
@@ -274,6 +300,55 @@ public sealed class DenonClient : IAsyncDisposable
     }
 
     public void Refresh() => QueryAll();
+
+    private void StatusTick()
+    {
+        if (!State.Online) return;
+        if (CheckStatus()) return;
+
+        _log.LogInformation("{Host} stopped answering; reconnecting", Config.Host);
+        _dropReason = "The receiver stopped answering.";
+        // Closing the stream fails the pending read, and the connection loop takes it
+        // from there: offline now, then a fresh connection that asks for everything.
+        try { _stream?.Dispose(); } catch { /* already gone */ }
+    }
+
+    /// <summary>
+    /// Asks the receiver for its basic state. False when the previous check went
+    /// unanswered, which means the connection is dead however open it looks.
+    /// Internal so the self-test can run it without a timer or a socket.
+    /// </summary>
+    internal bool CheckStatus()
+    {
+        if (_awaitingAnswer) return false;
+
+        lock (_gate)
+        {
+            // Mid-command the answers would race the one being verified, and the
+            // receiver is about to talk anyway. The next round will do.
+            if (_queue.Count > 0 || _pending.Count > 0) return true;
+
+            foreach (var query in StatusQueries) _queue.Add(new PendingCommand(query, null, Quiet: true));
+            foreach (var zone in Zones.Where(z => z > 1))
+            {
+                _queue.Add(new PendingCommand($"Z{zone}?", null, Quiet: true));
+                _queue.Add(new PendingCommand($"Z{zone}MU?", null, Quiet: true));
+            }
+            _signal.Release(_queue.Count);
+        }
+
+        _awaitingAnswer = true;
+        Interlocked.Exchange(ref _statusAnswersUntil, Environment.TickCount64 + StatusAnswerWindowMs);
+        return true;
+    }
+
+    /// <summary>The state a status check asks about, to tell an answer from news.</summary>
+    private string StatusSignature()
+    {
+        static string Zone(ZoneState z) => $"{z.Power}|{z.Volume}|{z.Mute}|{z.Source}";
+        return $"{State.Power}|{State.VolumeMax}|{State.SoundMode}|{State.QuickSelect}|" +
+               $"{Zone(State.Main)}|{Zone(State.Zone2)}|{Zone(State.Zone3)}";
+    }
 
     /// <summary>Queued but unsent commands. Internal so the self-test can read them
     /// without a receiver on the other end.</summary>
@@ -1029,6 +1104,7 @@ public sealed class DenonClient : IAsyncDisposable
                 backoff = TimeSpan.FromSeconds(2);
                 Asleep = false;
                 _controlEverConnected = true;
+                _awaitingAnswer = false;
                 SetOnline(true, null);
                 _log.LogInformation("Connected to {Host}", Config.Host);
 
@@ -1043,7 +1119,7 @@ public sealed class DenonClient : IAsyncDisposable
             catch (Exception ex)
             {
                 _log.LogDebug("Connection to {Host} lost: {Message}", Config.Host, ex.Message);
-                SetOnline(false, ex.Message);
+                SetOnline(false, Interlocked.Exchange(ref _dropReason, null) ?? ex.Message);
                 Asleep = await AnswersHttpAsync(ct);
                 if (Asleep) Touch();
             }
@@ -1127,14 +1203,14 @@ public sealed class DenonClient : IAsyncDisposable
                 continue;
             }
 
-            await TransmitAsync(command.Text, ct);
+            await TransmitAsync(command.Text, ct, command.Quiet);
             try { await Task.Delay(SendGap, ct); } catch { break; }
         }
     }
 
-    private async Task TransmitAsync(string command, CancellationToken ct)
+    private async Task TransmitAsync(string command, CancellationToken ct, bool quiet = false)
     {
-        Record(outgoing: true, command);
+        if (!quiet) Record(outgoing: true, command);
         var stream = _stream;
         if (stream is not null)
         {
@@ -1168,7 +1244,13 @@ public sealed class DenonClient : IAsyncDisposable
     /// <summary>Internal so the self-test can feed it protocol lines directly.</summary>
     internal void Handle(string line)
     {
-        Record(outgoing: false, line);
+        _awaitingAnswer = false;
+
+        // The answers to a status check are logged only when they say something new.
+        var routine = Environment.TickCount64 < Interlocked.Read(ref _statusAnswersUntil) &&
+                      StatusPrefixes.Any(p => line.StartsWith(p, StringComparison.Ordinal));
+        var before = routine ? StatusSignature() : null;
+        if (!routine) Record(outgoing: false, line);
         var changed = true;
 
         if (line.StartsWith("PS", StringComparison.Ordinal))
@@ -1238,6 +1320,12 @@ public sealed class DenonClient : IAsyncDisposable
         }
         else
             changed = false;   // SS / SD / VS* ... not modelled
+
+        if (routine)
+        {
+            if (before == StatusSignature()) return;
+            Record(outgoing: false, line);
+        }
 
         if (changed) Touch();
     }
