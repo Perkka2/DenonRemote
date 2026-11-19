@@ -8,7 +8,7 @@
 
     <!-- Local builds report this. A release is stamped with its tag by the workflow,
          so this only has to be roughly right between releases. -->
-    <Version>1.6.0</Version>
+    <Version>1.7.0</Version>
     <Product>Denon Remote</Product>
     <AssemblyName>DenonRemote</AssemblyName>
 
@@ -24,5 +24,32 @@
 
     <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
   </PropertyGroup>
+
+  <!-- The Web SDK ships every .json under the project as content. These two folders
+       are build output and captures, and have no business inside a release. -->
+  <ItemGroup>
+    <Content Remove="dist/**;discovery/**" />
+    <None Remove="dist/**;discovery/**" />
+  </ItemGroup>
+
+  <!-- The container image, built by the SDK itself (no Docker needed, which is what
+       lets the release workflow make it from inside its own container):
+         dotnet publish -c Release -t:PublishContainer
+       That loads one image for this machine into a local Docker. The release
+       workflow adds both architectures and a registry on its command line. -->
+  <PropertyGroup>
+    <ContainerRepository>denonremote</ContainerRepository>
+
+    <!-- Root, unlike the base image's own default: a volume or a host folder mounted
+         on /data belongs to root unless someone arranged otherwise, and settings
+         that silently fail to save are worse. Docker's user option still works for anyone who
+         mounts a folder they own. -->
+    <ContainerUser>root</ContainerUser>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ContainerPort Include="5080" Type="tcp" />
+    <ContainerEnvironmentVariable Include="DENONREMOTE_DATA" Value="/data" />
+  </ItemGroup>
 
 </Project>

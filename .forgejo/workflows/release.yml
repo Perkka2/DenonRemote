@@ -130,3 +130,26 @@ jobs:
             curl -fsS -X POST -H "$auth" -F "attachment=@$f" \
               "$api/$id/assets?name=$(basename "$f")" >/dev/null
           done
+
+      # Last, so that a registry problem cannot cost the release above. The SDK builds
+      # and pushes the image itself - there is no Docker inside this job to do it.
+      # Unlike the zips this one needs the .NET runtime from its base image, which is
+      # what lets one build serve both architectures. Without a tag it pushes :dev.
+      #
+      # The job's own token is tried unless a REGISTRY_TOKEN secret exists: a personal
+      # access token with package write, for a Forgejo that won't let jobs push.
+      - name: Image
+        env:
+          DOTNET_CONTAINER_PUSH_REGISTRY_UNAME: ${{ github.repository_owner }}
+          DOTNET_CONTAINER_PUSH_REGISTRY_PWORD: ${{ secrets.REGISTRY_TOKEN || github.token }}
+        run: |
+          tags=dev stamp=
+          if [ "$GITHUB_REF_TYPE" = tag ]; then
+            version="${GITHUB_REF_NAME#v}"
+            tags="$version;latest" stamp="-p:Version=$version"
+          fi
+          dotnet publish -c Release -t:PublishContainer -p:DebugType=none $stamp \
+            -p:ContainerRegistry="${GITHUB_SERVER_URL#*://}" \
+            -p:ContainerRepository="${GITHUB_REPOSITORY,,}" \
+            '-p:RuntimeIdentifiers="linux-x64;linux-arm64"' \
+            "-p:ContainerImageTags=\"$tags\""

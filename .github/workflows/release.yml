@@ -80,6 +80,38 @@ jobs:
           name: DenonRemote-${{ matrix.rid }}
           path: dist/*.zip
 
+  # The container image, on ghcr.io. Its own job so that it neither waits for the
+  # zips nor takes them down with it. The SDK builds and pushes it without Docker;
+  # it needs the .NET 10 SDK for that, still targeting net8.0. Without a tag it
+  # pushes :dev.
+  image:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Publish
+        env:
+          DOTNET_CONTAINER_PUSH_REGISTRY_UNAME: ${{ github.actor }}
+          DOTNET_CONTAINER_PUSH_REGISTRY_PWORD: ${{ github.token }}
+        run: |
+          tags=dev stamp=
+          if [ "$GITHUB_REF_TYPE" = tag ]; then
+            version="${GITHUB_REF_NAME#v}"
+            tags="$version;latest" stamp="-p:Version=$version"
+          fi
+          dotnet publish -c Release -t:PublishContainer -p:DebugType=none $stamp \
+            -p:ContainerRegistry=ghcr.io \
+            -p:ContainerRepository="${GITHUB_REPOSITORY,,}" \
+            '-p:RuntimeIdentifiers="linux-x64;linux-arm64"' \
+            "-p:ContainerImageTags=\"$tags\""
+
   release:
     needs: build
     runs-on: ubuntu-latest

@@ -101,11 +101,21 @@ if (options.FetchUi is { } target)
     return 0;
 }
 
+// Microsoft's container images ask for port 8080 through this variable. The port is
+// chosen below instead, and leaving the variable set earns a warning on every start.
+if (!options.UrlsOverridden) Environment.SetEnvironmentVariable("ASPNETCORE_HTTP_PORTS", null);
+
 var builder = WebApplication.CreateBuilder(new WebApplicationOptions
 {
     Args = args,
     ContentRootPath = contentRoot,
 });
+
+// In a container the keys behind Blazor's form tokens are not kept, and the
+// framework warns about it twice per start. Nothing here is protected for longer
+// than a page stays open, so losing them on a restart costs a reload at most.
+if (StartupOptions.InContainer(Environment.GetEnvironmentVariable("DOTNET_RUNNING_IN_CONTAINER")))
+    builder.Logging.AddFilter("Microsoft.AspNetCore.DataProtection", LogLevel.Error);
 
 // Bind to every interface so phones on the same wifi can reach it. A caller that
 // passes --urls gets what they asked for instead.

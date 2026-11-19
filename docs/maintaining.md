@@ -84,6 +84,24 @@ binary at launch. For the same reason `publish.sh` refuses the `osx-*` targets
 unless it runs on a Mac or with SDK 10. GitHub's workflow builds each target on its
 own native runner instead.
 
+Both workflows also push a container image for `linux-x64` and `linux-arm64`,
+tagged with the version and `latest`: Forgejo to its own registry
+(`git.idetorka.se/perkka/denonremote`), GitHub to `ghcr.io/perkka2/denonremote`.
+The SDK builds and pushes it (`dotnet publish -t:PublishContainer`), so no Docker is
+needed in the job. Unlike the zips the image is not self-contained: it sits on
+Microsoft's `aspnet:8.0` base image, which is what allows one build for both
+architectures. Its settings are in the csproj. To try one locally, with Docker
+running:
+
+```bash
+dotnet publish -c Release -t:PublishContainer    # loads denonremote:latest
+docker run --rm -p 5080:5080 denonremote
+```
+
+Running either workflow by hand, without a tag, pushes the image as `:dev`. On
+Forgejo the push uses the job's own token; if the registry refuses it, add a
+personal access token with package write as the `REGISTRY_TOKEN` secret.
+
 Three deliberate choices in there:
 
 * **Single-file, without native self-extract.** The runtime's native libraries are

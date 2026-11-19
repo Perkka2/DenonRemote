@@ -23,10 +23,31 @@ wifi use `http://<your-machine>.local:5080`. Add it to the home screen on iOS an
 opens full-screen.
 
 On first run: **Setup → Scan for receivers**, or add an IP by hand if your network
-blocks SSDP. Receivers and scenes live in `~/.denonremote/`.
+blocks SSDP. Receivers and scenes live in `~/.denonremote/`, or in the folder named
+by `--data` or the `DENONREMOTE_DATA` environment variable.
 
 Builds that need no .NET installed are attached to each
 [release](../../releases) for macOS, Windows and Linux, on both Intel and ARM.
+
+### In a container
+
+For a machine that is always on. Each release also publishes an image for x64 and
+ARM64, as `git.idetorka.se/perkka/denonremote` and `ghcr.io/perkka2/denonremote`:
+
+```bash
+docker run -d --name denonremote --restart unless-stopped \
+  --network host -v denonremote:/data \
+  git.idetorka.se/perkka/denonremote:latest
+```
+
+Then open `http://<that-machine>:5080`. Settings are kept in `/data`.
+
+`--network host` is what lets **Scan for receivers** work: discovery is multicast,
+which does not cross Docker's bridge. It needs Linux. Without it, publish the port
+with `-p 5080:5080` and add receivers by IP address.
+
+The container runs as root so that it can write to whatever is mounted on `/data`.
+To run it as yourself, mount a folder you own and add `--user "$(id -u):$(id -g)"`.
 
 ## What it does
 
