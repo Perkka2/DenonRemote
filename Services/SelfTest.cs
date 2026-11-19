@@ -38,6 +38,7 @@ public static class SelfTest
         HttpApi();
         Scenes();
         StatusChecks();
+        DataFolder();
 
         Console.WriteLine();
         Console.WriteLine($"  {_passed} passed, {Failures.Count} failed");
@@ -1462,6 +1463,25 @@ public static class SelfTest
         zoned.CheckStatus();
         Check("other zones are asked about once seen",
             zoned.Pending.Contains("Z2?") && zoned.Pending.Contains("Z3MU?"));
+    }
+
+    /// <summary>Where settings go when nothing says, and when something does.</summary>
+    private static void DataFolder()
+    {
+        var home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+        Check("settings default to the profile", AppPaths.Default(null) == Path.Combine(home, ".denonremote"));
+        Check("a blank name is no name", AppPaths.Default("  ") == AppPaths.Default(null));
+        Check("a named folder is used as given", AppPaths.Default("/data") == Path.GetFullPath("/data"));
+        Check("a relative folder is pinned down", Path.IsPathRooted(AppPaths.Default("settings")));
+
+        var before = AppPaths.Root;
+        var parsed = StartupOptions.Parse(["--data", "/srv/denon", "--port", "81"]);
+        Check("--data names the folder", AppPaths.Root == Path.GetFullPath("/srv/denon") && parsed.Unknown.Count == 0);
+        Check("and the files follow it", AppPaths.Receivers == Path.Combine(AppPaths.Root, "receivers.json"));
+        AppPaths.Root = before;
+
+        Check("a container is recognised", StartupOptions.InContainer("true") && StartupOptions.InContainer("1"));
+        Check("and its absence", !StartupOptions.InContainer(null) && !StartupOptions.InContainer("false"));
     }
 
     private static void Feed(DenonClient client, params string[] lines)

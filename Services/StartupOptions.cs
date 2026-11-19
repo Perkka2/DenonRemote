@@ -53,10 +53,17 @@ public sealed class StartupOptions
         typeof(StartupOptions).Assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()
             ?.InformationalVersion.Split('+')[0] ?? "dev";
 
+    /// <summary>
+    /// Microsoft's container base images set this. There is no browser in there to
+    /// open, and the attempt would only put an error in the log.
+    /// </summary>
+    internal static bool InContainer(string? flag) =>
+        string.Equals(flag, "true", StringComparison.OrdinalIgnoreCase) || flag == "1";
+
     public static StartupOptions Parse(string[] args)
     {
         var port = 5080;
-        var openBrowser = true;
+        var openBrowser = !InContainer(Environment.GetEnvironmentVariable("DOTNET_RUNNING_IN_CONTAINER"));
         var urlsOverridden = false;
         var selfTest = false;
         string? fetchUi = null;
@@ -78,6 +85,11 @@ public sealed class StartupOptions
 
                 case "--no-browser":
                     openBrowser = false;
+                    break;
+
+                case "--data" when i + 1 < args.Length:
+                    AppPaths.Root = AppPaths.Default(args[i + 1]);
+                    i++;
                     break;
 
                 case "--self-test":
@@ -145,6 +157,7 @@ public sealed class StartupOptions
 
     --port <n>         listen on this port (default 5080)
     --no-browser       don't open a browser on start
+    --data <dir>       keep settings in <dir> (default ~/.denonremote, or $DENONREMOTE_DATA)
     --self-test        run the built-in checks and exit
     --fetch-ui <host>  capture that receiver's own setup UI and exit
     --probe <host>     sweep that receiver's HTTP APIs and exit
