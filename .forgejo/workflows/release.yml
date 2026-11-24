@@ -58,9 +58,16 @@ jobs:
           curl -s -o /tmp/answer -w 'who the token belongs to: HTTP %{http_code} ' \
             -H "Authorization: token $TOKEN" "$GITHUB_SERVER_URL/api/v1/user"
           jq -c '{login, message}' /tmp/answer || head -c 300 /tmp/answer; echo
-          curl -s -o /tmp/answer -w 'starting an upload as %{username}: HTTP %{http_code} (202 is yes) ' \
+          curl -s -o /tmp/answer -w 'starting an upload: HTTP %{http_code} (202 is yes) ' \
             -u "$NAME:$TOKEN" -X POST "$GITHUB_SERVER_URL/v2/${GITHUB_REPOSITORY,,}/blobs/uploads/"
           head -c 300 /tmp/answer; echo
+          # The SDK does not send the token with each request as above; it trades it
+          # for a short-lived one first, the way Docker does.
+          for scope in '*' "repository:${GITHUB_REPOSITORY,,}:pull,push"; do
+            curl -s -o /tmp/answer -w "trading it in for scope $scope: HTTP %{http_code} " -u "$NAME:$TOKEN" \
+              -G --data-urlencode "service=container_registry" --data-urlencode "scope=$scope" "$GITHUB_SERVER_URL/v2/token"
+            jq -c '{got: (.token != null), message, errors}' /tmp/answer || head -c 300 /tmp/answer; echo
+          done
           exit 0
 
       # linux-x64 goes first and its build runs the self-test: the image only has the
