@@ -44,6 +44,25 @@ jobs:
       - name: Tools
         run: apt-get update -qq && apt-get install -y -qq zip jq >/dev/null
 
+      # Says, in the first seconds of the run, whether the image push at the far end
+      # of it can work - and if not, why, which the push itself does not. Never fails
+      # the job: the zips do not depend on the registry.
+      - name: Registry access
+        env:
+          NAME: ${{ github.repository_owner }}
+          TOKEN: ${{ secrets.REGISTRY_TOKEN || github.token }}
+          PERSONAL: ${{ secrets.REGISTRY_TOKEN != '' }}
+        run: |
+          set +e
+          echo "using the $([ "$PERSONAL" = true ] && echo REGISTRY_TOKEN secret || echo "job's own token") (${#TOKEN} characters)"
+          curl -s -o /tmp/answer -w 'who the token belongs to: HTTP %{http_code} ' \
+            -H "Authorization: token $TOKEN" "$GITHUB_SERVER_URL/api/v1/user"
+          jq -c '{login, message}' /tmp/answer || head -c 300 /tmp/answer; echo
+          curl -s -o /tmp/answer -w 'starting an upload as %{username}: HTTP %{http_code} (202 is yes) ' \
+            -u "$NAME:$TOKEN" -X POST "$GITHUB_SERVER_URL/v2/${GITHUB_REPOSITORY,,}/blobs/uploads/"
+          head -c 300 /tmp/answer; echo
+          exit 0
+
       # linux-x64 goes first and its build runs the self-test: the image only has the
       # .NET 10 runtime, so `dotnet run` can't start a net8.0 app, but the published
       # build carries its own runtime - and it's what actually ships.
