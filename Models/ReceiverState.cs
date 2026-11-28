@@ -17,6 +17,15 @@ public sealed class AudioState
     public double? Bass { get; set; }
     public double? Treble { get; set; }
     public double? Subwoofer { get; set; }
+
+    /// <summary>The second subwoofer's level, on units that drive two.</summary>
+    public double? Subwoofer2 { get; set; }
+
+    /// <summary>
+    /// "Subwoofer Level Adjust" - on the units that have the switch, the levels above
+    /// are ignored while it is off. Null where the receiver never mentions one.
+    /// </summary>
+    public bool? SubwooferAdjust { get; set; }
     public double? Dialog { get; set; }
 
     public bool? DynamicEq { get; set; }

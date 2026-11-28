@@ -846,6 +846,26 @@ public static class SelfTest
         Check("bass", client.State.Audio.Bass == 56);
         Check("treble", client.State.Audio.Treble == 44);
         Check("subwoofer half step", client.State.Audio.Subwoofer == 50.5);
+        Check("no subwoofer switch unless the receiver mentions one", client.State.Audio.SubwooferAdjust is null);
+
+        // What an AVR-X4100W answers to "PSSWL ?".
+        var twoSubs = NewClient();
+        Feed(twoSubs, "PSSWL OFF", "PSSWL 50", "PSSWL2 515");
+        Check("subwoofer level switch", twoSubs.State.Audio.SubwooferAdjust == false);
+        Check("the switch is not a level", twoSubs.State.Audio.Subwoofer == 50);
+        Check("second subwoofer", twoSubs.State.Audio.Subwoofer2 == 51.5);
+
+        Check("switching the subwoofer level on",
+            Sent(twoSubs, () => twoSubs.SetSubwooferAdjust(true)) == "PSSWL ON");
+        Check("setting the second subwoofer",
+            Sent(twoSubs, () => twoSubs.SetSubwoofer2(52.5)) == "PSSWL2 525");
+        Check("and asking with the query that exists", twoSubs.Pending.Contains("PSSWL ?"));
+
+        // The switch's answer arrives first and must not settle the pending level.
+        twoSubs.SetSubwoofer(48);
+        Feed(twoSubs, "PSSWL ON", "PSSWL 48", "PSSWL2 525");
+        Check("a level is confirmed by the level, not the switch",
+            twoSubs.Statuses.All(s => s.Outcome == CommandOutcome.Confirmed));
         Check("dynamic eq", client.State.Audio.DynamicEq == true);
         Check("dynamic volume", client.State.Audio.DynamicVolume == "MED");
         Check("multeq", client.State.Audio.MultEq == "FLAT");

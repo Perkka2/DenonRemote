@@ -20,8 +20,30 @@
                  Disabled="@(Disabled || ToneLocked)" ValueChanged="Client.SetBass" />
     <LevelSlider Label="Treble" Value="Audio.Treble" Min="44" Max="56" Step="1"
                  Disabled="@(Disabled || ToneLocked)" ValueChanged="Client.SetTreble" />
-    <LevelSlider Label="Subwoofer" Value="Audio.Subwoofer" Disabled="@Disabled"
-                 ValueChanged="Client.SetSubwoofer" />
+    @* Some units have a switch in front of the subwoofer level, and ignore the level
+       while it is off - which looks exactly like a slider that does not work. *@
+    @if (Audio.SubwooferAdjust is not null)
+    {
+        <div class="toggle-row">
+            <button class="pill @(Audio.SubwooferAdjust == true ? "active" : "")"
+                    disabled="@Disabled"
+                    @onclick="() => Client.SetSubwooferAdjust(Audio.SubwooferAdjust != true)">
+                Subwoofer level adjust @(Audio.SubwooferAdjust == true ? "on" : "off")
+            </button>
+            @if (SubwooferLocked)
+            {
+                <span class="hint">Switch it on to set the level</span>
+            }
+        </div>
+    }
+
+    <LevelSlider Label="@(TwoSubwoofers ? "Subwoofer 1" : "Subwoofer")" Value="Audio.Subwoofer"
+                 Disabled="@(Disabled || SubwooferLocked)" ValueChanged="Client.SetSubwoofer" />
+    @if (TwoSubwoofers)
+    {
+        <LevelSlider Label="Subwoofer 2" Value="Audio.Subwoofer2"
+                     Disabled="@(Disabled || SubwooferLocked)" ValueChanged="Client.SetSubwoofer2" />
+    }
     @if (Audio.Dialog is not null)
     {
         <LevelSlider Label="Dialogue" Value="Audio.Dialog" Disabled="@Disabled"
@@ -68,6 +90,13 @@
 
     private AudioState Audio => Client.State.Audio;
     private bool Disabled => !Client.State.Online || Client.State.Main.Power != true;
+
+    private bool SubwooferLocked => Audio.SubwooferAdjust == false;
+
+    // A unit that can drive two reports a second level even with one connected, so
+    // where the channel list is known it gets the last word.
+    private bool TwoSubwoofers =>
+        Audio.Subwoofer2 is not null && (Audio.ChannelOrder.Count == 0 || Audio.Channels.ContainsKey("SW2"));
 
     // Bass and treble do nothing in Direct / Pure Direct.
     private bool ToneLocked =>

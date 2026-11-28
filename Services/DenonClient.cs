@@ -670,6 +670,22 @@ public sealed class DenonClient : IAsyncDisposable
     public void SetBass(double value) => SetLevel("PSBAS", value, v => State.Audio.Bass = v);
     public void SetTreble(double value) => SetLevel("PSTRE", value, v => State.Audio.Treble = v);
     public void SetSubwoofer(double value) => SetLevel("PSSWL", value, v => State.Audio.Subwoofer = v);
+
+    // There is no "PSSWL2 ?": the one query answers for the switch and both levels.
+    public void SetSubwoofer2(double value) =>
+        SetLevel("PSSWL2", value, v => State.Audio.Subwoofer2 = v, "PSSWL ?");
+
+    public void SetSubwooferAdjust(bool on)
+    {
+        var previous = State.Audio.SubwooferAdjust;
+        State.Audio.SubwooferAdjust = on;
+        Touch();
+        SendVerified(SubwooferAdjustKey, "Subwoofer level adjust", $"PSSWL {(on ? "ON" : "OFF")}",
+            on ? "ON" : "OFF", "PSSWL ?",
+            () => State.Audio.SubwooferAdjust = previous);
+    }
+
+    private const string SubwooferAdjustKey = "PS:SWL ADJUST";
     public void SetDialog(double value) => SetLevel("PSDIL", value, v => State.Audio.Dialog = v);
 
     public void SetChannelLevel(string channel, double value)
@@ -681,7 +697,7 @@ public sealed class DenonClient : IAsyncDisposable
             $"CV{channel} {EncodeLevel(value)}", EncodeLevel(value), "CV?");
     }
 
-    private void SetLevel(string command, double value, Action<double> apply)
+    private void SetLevel(string command, double value, Action<double> apply, string? query = null)
     {
         value = Math.Clamp(value, 38, 62);
         apply(value);
@@ -689,7 +705,7 @@ public sealed class DenonClient : IAsyncDisposable
 
         var key = command[2..];
         SendVerified("PS:" + key, key, $"{command} {EncodeLevel(value)}",
-            EncodeLevel(value), $"{command} ?");
+            EncodeLevel(value), query ?? $"{command} ?");
     }
 
     public void SetDynamicEq(bool on)
@@ -1396,6 +1412,16 @@ public sealed class DenonClient : IAsyncDisposable
         var key = rest[..space];
         var value = rest[(space + 1)..].Trim();
 
+        // PSSWL carries two things on some units: the level, and a switch that decides
+        // whether the level counts ("PSSWL OFF", "PSSWL 50", "PSSWL2 50" to one query).
+        // The switch must not be taken for the answer to a level that was just set.
+        if (key == "SWL" && value is "ON" or "OFF")
+        {
+            Confirm(SubwooferAdjustKey, value);
+            State.Audio.SubwooferAdjust = value == "ON";
+            return true;
+        }
+
         // Anything the receiver answers is a setting that applies to it right now,
         // so the UI can show exactly the parameters this unit supports in this mode.
         State.Audio.Parameters[key] = value;
@@ -1406,6 +1432,7 @@ public sealed class DenonClient : IAsyncDisposable
             case "BAS": return TryLevel(value, out var bass) && Assign(() => State.Audio.Bass = bass);
             case "TRE": return TryLevel(value, out var treble) && Assign(() => State.Audio.Treble = treble);
             case "SWL": return TryLevel(value, out var sub) && Assign(() => State.Audio.Subwoofer = sub);
+            case "SWL2": return TryLevel(value, out var sub2) && Assign(() => State.Audio.Subwoofer2 = sub2);
             case "DIL": return TryLevel(value, out var dialog) && Assign(() => State.Audio.Dialog = dialog);
             case "DYNEQ": State.Audio.DynamicEq = value == "ON"; return true;
             case "DYNVOL": State.Audio.DynamicVolume = value; return true;
